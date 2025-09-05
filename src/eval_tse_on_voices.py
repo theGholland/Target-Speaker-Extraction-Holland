@@ -176,7 +176,7 @@ def main() -> None:
     results = []
 
     spk_model = EncDecSpeakerLabelModel.from_pretrained(
-        "speakerverification_ecapa",
+        "ecapa_tdnn",
     ).to(device)
     spk_model.eval()
 
