@@ -22,7 +22,7 @@ The script downloads the specified subset if it is not already present and creat
 bank with enrollment and target audio for each speaker.
 
 ```bash
-python src/prepare_voices.py --num_speakers 10 --subset train-clean-100
+python src/prepare_voices.py --num_speakers 10 --subset test-clean
 ```
 
 Resulting structure:
