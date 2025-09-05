@@ -53,6 +53,8 @@ def build_voice_bank(args: argparse.Namespace) -> None:
     import torch
     import torchaudio
 
+    Path("data/LibriSpeech").mkdir(parents=True, exist_ok=True)
+
     dataset = torchaudio.datasets.LIBRISPEECH(
         root="data/LibriSpeech", url=args.subset, download=True
     )
