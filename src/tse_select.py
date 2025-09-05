@@ -1,10 +1,11 @@
 import argparse
 import os
 import time
-from typing import Optional
+from typing import Optional, Iterable
 
 import torch
 import torchaudio
+from pathlib import Path
 
 
 def load_audio(path: str, target_sr: Optional[int] = None) -> tuple[torch.Tensor, int]:
@@ -29,6 +30,26 @@ def mix_at_snr(target: torch.Tensor, noise: torch.Tensor, snr_db: float) -> torc
     scale = torch.sqrt(target_power / noise_power) * (10 ** (-snr_db / 20))
     noise = noise * scale
     return target + noise
+
+def compose_babble(wavs: Iterable[torch.Tensor], length: int) -> torch.Tensor:
+    """Create uniform babble by looping and level-equalizing input waves."""
+    wavs = list(wavs)
+    if not wavs:
+        return torch.zeros(length)
+    processed = []
+    for w in wavs:
+        if w.shape[-1] < length:
+            reps = (length + w.shape[-1] - 1) // w.shape[-1]
+            w = w.repeat(reps)[:length]
+        else:
+            w = w[:length]
+        w = w - w.mean()
+        rms = w.pow(2).mean().sqrt()
+        if rms > 0:
+            w = w / rms
+        processed.append(w)
+    babble = torch.stack(processed).mean(dim=0)
+    return babble
 
 
 def ecapa_embedding(model, wav: torch.Tensor, sr: int, device: torch.device) -> torch.Tensor:
@@ -55,6 +76,7 @@ def main():
     parser = argparse.ArgumentParser(description="Target speaker extraction by selection")
     parser.add_argument("--target", type=str, required=True, help="Path to clean target/enrollment audio")
     parser.add_argument("--noise", type=str, help="Path to noise/interferer audio")
+    parser.add_argument("--create_noise", action="store_true", help="Create babble noise from other voices")
     parser.add_argument("--snr_db", type=float, default=0.0, help="SNR for mixing target and noise")
     parser.add_argument(
         "--model",
@@ -79,8 +101,22 @@ def main():
     # Load enrollment/clean target
     target_wav, sr = load_audio(args.target)
 
-    # If noise provided, create mixture
-    if args.noise:
+    # If noise provided or to be created, create mixture
+    if args.create_noise:
+        target_path = Path(args.target)
+        voices_dir = target_path.parent.parent
+        speaker_dir = target_path.parent.name
+        babble_wavs = []
+        for spk in voices_dir.iterdir():
+            if not spk.is_dir() or spk.name == speaker_dir:
+                continue
+            wav, sr = load_audio(str(spk / "target.wav"), sr)
+            babble_wavs.append(wav)
+        if not babble_wavs:
+            raise RuntimeError("No other speakers found for babble noise")
+        noise_wav = compose_babble(babble_wavs, target_wav.shape[-1])
+        mixture = mix_at_snr(target_wav, noise_wav, args.snr_db)
+    elif args.noise:
         noise_wav, sr = load_audio(args.noise, sr)
         mixture = mix_at_snr(target_wav, noise_wav, args.snr_db)
     else:
