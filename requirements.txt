@@ -1,0 +1,5 @@
+torch
+torchaudio
+asteroid
+nemo_toolkit[asr]
+demucs
