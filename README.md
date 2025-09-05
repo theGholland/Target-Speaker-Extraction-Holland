@@ -35,6 +35,20 @@ data/voices/
   └── ...
 ```
 
+## Target Speaker Extraction on a Single File
+
+`tse_select.py` separates a mixture into sources using a chosen separation model
+(DPRNN, ConvTasNet, or Demucs) and selects the source most similar to the enrollment
+speaker using NeMo ECAPA embeddings.
+
+```bash
+python src/tse_select.py --target path/to/clean.wav --noise path/to/noise.wav \
+       --snr_db 0 --model dprnn
+```
+
+Separated sources (`sep_source0.wav`, `sep_source1.wav`) and the selected result
+(`tse_result.wav`) are written alongside the target file.
+
 ## Batch Evaluation of Target Speaker Extraction
 
 `eval_tse_on_voices.py` mixes each target speaker with uniform babble noise at specified
@@ -52,20 +66,6 @@ Sweep over multiple SNRs and babble counts:
 ```bash
 python src/eval_tse_on_voices.py --snr_list "-5,0,5" --babble_list "1,2,3"
 ```
-
-## Target Speaker Extraction on a Single File
-
-`tse_select.py` separates a mixture into sources using a chosen separation model
-(DPRNN, ConvTasNet, or Demucs) and selects the source most similar to the enrollment
-speaker using NeMo ECAPA embeddings.
-
-```bash
-python src/tse_select.py --target path/to/clean.wav --noise path/to/noise.wav \
-       --snr_db 0 --model dprnn
-```
-
-Separated sources (`sep_source0.wav`, `sep_source1.wav`) and the selected result
-(`tse_result.wav`) are written alongside the target file.
 
 ## Repository Layout
 
