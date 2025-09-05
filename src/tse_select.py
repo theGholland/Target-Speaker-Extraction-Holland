@@ -52,10 +52,12 @@ def compose_babble(wavs: Iterable[torch.Tensor], length: int) -> torch.Tensor:
     return babble
 
 
-def ecapa_embedding(model, wav: torch.Tensor, sr: int, device: torch.device) -> torch.Tensor:
+def ecapa_embedding(model, wav: torch.Tensor, device: torch.device) -> torch.Tensor:
     """Compute a speaker embedding using NeMo ECAPA."""
     with torch.no_grad():
-        emb = model.get_embedding(wav.to(device), sr=sr)
+        wav = wav.unsqueeze(0).to(device)
+        length = torch.tensor([wav.shape[-1]], device=device)
+        _, emb = model.forward(input_signal=wav, input_signal_length=length)
         emb = torch.nn.functional.normalize(emb.squeeze(0), dim=-1)
     return emb
 
@@ -168,8 +170,8 @@ def main():
     spk_model = EncDecSpeakerLabelModel.from_pretrained("speakerverification_ecapa").to(device)
     spk_model.eval()
 
-    enroll_emb = ecapa_embedding(spk_model, target_wav, sr, device)
-    est_embs = [ecapa_embedding(spk_model, src, sr, device) for src in est_sources]
+    enroll_emb = ecapa_embedding(spk_model, target_wav, device)
+    est_embs = [ecapa_embedding(spk_model, src, device) for src in est_sources]
     scores = [torch.nn.functional.cosine_similarity(enroll_emb, emb, dim=0).item() for emb in est_embs]
     chosen_idx = int(torch.argmax(torch.tensor(scores)))
     tse_result = est_sources[chosen_idx]
