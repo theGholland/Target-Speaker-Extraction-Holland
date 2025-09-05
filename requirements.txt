@@ -1,5 +1,5 @@
-torch
-torchaudio
-asteroid
-nemo_toolkit[asr]
-demucs
+torch==2.4.0
+torchaudio==2.4.0
+asteroid==0.7.0
+nemo_toolkit[asr]==2.4.0
+demucs==4.0.1
