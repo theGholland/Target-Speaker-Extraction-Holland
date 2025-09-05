@@ -185,19 +185,23 @@ def main() -> None:
             from asteroid.models import DPRNNTasNet
 
             sep_model = DPRNNTasNet.from_pretrained(
-                "mpariente/DPRNNTasNet_WHAM_sepclean_16k"
+                "julien-c/DPRNNTasNet-ks16_WHAM_sepclean"
             ).to(device)
         elif model_name == "convtasnet":
             from asteroid.models import ConvTasNet
 
             sep_model = ConvTasNet.from_pretrained(
-                "mpariente/ConvTasNet_WHAM_sepclean_16k"
+                "JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k"
             ).to(device)
         elif model_name == "demucs":
-            from demucs.pretrained import get_model
-            from demucs.apply import apply_model
+            from huggingface_hub import hf_hub_download
+            from openvino.runtime import Core
 
-            sep_model = get_model("htdemucs").to(device)
+            core = Core()
+            xml_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.xml")
+            bin_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.bin")
+            ov_model = core.read_model(xml_path, bin_path)
+            sep_model = core.compile_model(ov_model, "CPU")
         else:
             raise ValueError(f"Unknown separation model: {model_name}")
         sep_model.eval()
@@ -225,13 +229,9 @@ def main() -> None:
 
                 start = time.time()
                 if model_name == "demucs":
-                    with torch.no_grad():
-                        est_sources = apply_model(
-                            sep_model,
-                            mixture.unsqueeze(0).unsqueeze(0).to(device),
-                            split=True,
-                            progress=False,
-                        )[0]
+                    ov_input = mixture.unsqueeze(0).unsqueeze(0).cpu().numpy()
+                    ov_output = sep_model([ov_input])[sep_model.output(0)]
+                    est_sources = torch.from_numpy(ov_output).squeeze(0)
                 else:
                     with torch.no_grad():
                         est_sources = sep_model(mixture.unsqueeze(0).to(device)).squeeze(0)

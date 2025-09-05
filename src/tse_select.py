@@ -128,7 +128,9 @@ def main():
     if args.model == "dprnn":
         from asteroid.models import DPRNNTasNet
 
-        model = DPRNNTasNet.from_pretrained("mpariente/DPRNNTasNet_WHAM!_sepclean_16k").to(device)
+        model = DPRNNTasNet.from_pretrained(
+            "julien-c/DPRNNTasNet-ks16_WHAM_sepclean"
+        ).to(device)
         model.eval()
         start = time.time()
         with torch.no_grad():
@@ -136,22 +138,26 @@ def main():
     elif args.model == "convtasnet":
         from asteroid.models import ConvTasNet
 
-        model = ConvTasNet.from_pretrained("mpariente/ConvTasNet_WHAM!_sepclean_16k").to(device)
+        model = ConvTasNet.from_pretrained(
+            "JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k"
+        ).to(device)
         model.eval()
         start = time.time()
         with torch.no_grad():
             est_sources = model(mixture.unsqueeze(0).to(device))
     else:  # demucs
-        from demucs.pretrained import get_model
-        from demucs.apply import apply_model
+        from huggingface_hub import hf_hub_download
+        from openvino.runtime import Core
 
-        model = get_model("htdemucs").to(device)
-        model.eval()
+        core = Core()
+        xml_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.xml")
+        bin_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.bin")
+        ov_model = core.read_model(xml_path, bin_path)
+        model = core.compile_model(ov_model, "CPU")
         start = time.time()
-        with torch.no_grad():
-            est_sources = apply_model(
-                model, mixture.unsqueeze(0).unsqueeze(0).to(device), split=True, progress=False
-            )[0]
+        ov_input = mixture.unsqueeze(0).unsqueeze(0).numpy()
+        ov_output = model([ov_input])[model.output(0)]
+        est_sources = torch.from_numpy(ov_output)
 
     processing_time = time.time() - start
     est_sources = est_sources.squeeze(0).cpu()
