@@ -53,7 +53,8 @@ Separated sources (`sep_source0.wav`, `sep_source1.wav`) and the selected result
 
 `eval_tse_on_voices.py` mixes each target speaker with uniform babble noise at specified
 signal-to-noise ratios and evaluates the extraction quality.  Results are written to
-`out_eval/results.csv`.
+`out_eval/results.csv` with columns for speaker, separation model, SNR, babble count,
+SI-SDR, and RTF.
 
 Evaluate a single condition:
 
@@ -65,6 +66,12 @@ Sweep over multiple SNRs and babble counts:
 
 ```bash
 python src/eval_tse_on_voices.py --snr_list "-5,0,5" --babble_list "1,2,3"
+```
+
+Sweep over different separation models:
+
+```bash
+python src/eval_tse_on_voices.py --snr_db 0 --num_babble_voices 3 --sep_models "dprnn,convtasnet,demucs"
 ```
 
 ## Repository Layout

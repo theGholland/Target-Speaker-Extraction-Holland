@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--snr_db", type=float, help="SNR value for a single run")
     parser.add_argument(
-        "--num_babble_voices", type=int, help="Number of babble voices for a single run"
+        "--num_babble_voices", type=int, help="Number of babble voices for a single run",
     )
     parser.add_argument(
         "--snr_list",
@@ -40,6 +40,12 @@ def parse_args() -> argparse.Namespace:
         "--babble_list",
         type=str,
         help="Comma-separated list of babble counts for sweeping",
+    )
+    parser.add_argument(
+        "--sep_models",
+        type=str,
+        default="dprnn",
+        help="Comma-separated list of separation models to evaluate (dprnn, convtasnet, demucs)",
     )
     parser.add_argument(
         "--limit",
@@ -135,8 +141,6 @@ def main() -> None:
     args = parse_args()
 
     import torch
-    import torchaudio
-    from asteroid.models import DPRNNTasNet
     from nemo.collections.asr.models import EncDecSpeakerLabelModel
 
     # Determine device
@@ -159,6 +163,8 @@ def main() -> None:
             "Specify either --snr_db and --num_babble_voices or --snr_list and --babble_list"
         )
 
+    sep_models = [m.strip().lower() for m in args.sep_models.split(",")]
+
     # Gather speakers
     speakers = [p for p in args.voices_dir.iterdir() if p.is_dir()]
     rng = random.Random(args.seed)
@@ -169,75 +175,101 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     results = []
 
-    # Load models once
-    sep_model = DPRNNTasNet.from_pretrained(
-        "mpariente/DPRNNTasNet_WHAM!_sepclean_16k"
-    ).to(device)
-    sep_model.eval()
-
     spk_model = EncDecSpeakerLabelModel.from_pretrained(
-        "speakerverification_ecapa"
+        "speakerverification_ecapa",
     ).to(device)
     spk_model.eval()
 
-    for snr_db, num_babble in combos:
-        for idx, spk_dir in enumerate(speakers):
-            enroll_wav, sr = load_audio(spk_dir / "enroll.wav")
-            target_wav, sr = load_audio(spk_dir / "target.wav", sr)
+    for model_name in sep_models:
+        if model_name == "dprnn":
+            from asteroid.models import DPRNNTasNet
 
-            # Select babble speakers deterministically
-            babbler_dirs = [
-                speakers[(idx + 1 + j) % len(speakers)] for j in range(num_babble)
-            ]
-            babble_wavs = [
-                load_audio(b / "target.wav", sr)[0] for b in babbler_dirs
-            ]
-            babble = compose_babble(babble_wavs, target_wav.shape[-1])
+            sep_model = DPRNNTasNet.from_pretrained(
+                "mpariente/DPRNNTasNet_WHAM!_sepclean_16k"
+            ).to(device)
+        elif model_name == "convtasnet":
+            from asteroid.models import ConvTasNet
 
-            mixture = mix_at_snr(target_wav, babble, snr_db)
-            peak = mixture.abs().max().item()
-            if peak > 1.0:
-                mixture = mixture / peak * 0.9  # apply headroom
+            sep_model = ConvTasNet.from_pretrained(
+                "mpariente/ConvTasNet_WHAM!_sepclean_16k"
+            ).to(device)
+        elif model_name == "demucs":
+            from demucs.pretrained import get_model
+            from demucs.apply import apply_model
 
-            audio_duration = mixture.shape[-1] / sr
+            sep_model = get_model("htdemucs").to(device)
+        else:
+            raise ValueError(f"Unknown separation model: {model_name}")
+        sep_model.eval()
 
-            start = time.time()
-            with torch.no_grad():
-                est_sources = sep_model(mixture.unsqueeze(0).to(device))
-            processing_time = time.time() - start
-            est_sources = est_sources.squeeze(0).cpu()
+        for snr_db, num_babble in combos:
+            for idx, spk_dir in enumerate(speakers):
+                enroll_wav, sr = load_audio(spk_dir / "enroll.wav")
+                target_wav, sr = load_audio(spk_dir / "target.wav", sr)
 
-            enroll_emb = ecapa_embedding(spk_model, enroll_wav, sr, device)
-            est_embs = [ecapa_embedding(spk_model, src, sr, device) for src in est_sources]
-            scores = [
-                torch.nn.functional.cosine_similarity(enroll_emb, emb, dim=0).item()
-                for emb in est_embs
-            ]
-            chosen_idx = int(torch.argmax(torch.tensor(scores)))
-            tse_result = est_sources[chosen_idx]
+                # Select babble speakers deterministically
+                babbler_dirs = [
+                    speakers[(idx + 1 + j) % len(speakers)] for j in range(num_babble)
+                ]
+                babble_wavs = [
+                    load_audio(b / "target.wav", sr)[0] for b in babbler_dirs
+                ]
+                babble = compose_babble(babble_wavs, target_wav.shape[-1])
 
-            rtf = processing_time / audio_duration if audio_duration > 0 else float("inf")
-            if rtf > 0.5:
-                print(
-                    f"Rejected {spk_dir.name} snr={snr_db} babble={num_babble} RTF={rtf:.3f}"
+                mixture = mix_at_snr(target_wav, babble, snr_db)
+                peak = mixture.abs().max().item()
+                if peak > 1.0:
+                    mixture = mixture / peak * 0.9  # apply headroom
+
+                audio_duration = mixture.shape[-1] / sr
+
+                start = time.time()
+                if model_name == "demucs":
+                    with torch.no_grad():
+                        est_sources = apply_model(
+                            sep_model,
+                            mixture.unsqueeze(0).unsqueeze(0).to(device),
+                            split=True,
+                            progress=False,
+                        )[0]
+                else:
+                    with torch.no_grad():
+                        est_sources = sep_model(mixture.unsqueeze(0).to(device)).squeeze(0)
+                processing_time = time.time() - start
+                est_sources = est_sources.cpu()
+
+                enroll_emb = ecapa_embedding(spk_model, enroll_wav, sr, device)
+                est_embs = [ecapa_embedding(spk_model, src, sr, device) for src in est_sources]
+                scores = [
+                    torch.nn.functional.cosine_similarity(enroll_emb, emb, dim=0).item()
+                    for emb in est_embs
+                ]
+                chosen_idx = int(torch.argmax(torch.tensor(scores)))
+                tse_result = est_sources[chosen_idx]
+
+                rtf = processing_time / audio_duration if audio_duration > 0 else float("inf")
+                if rtf > 0.5:
+                    print(
+                        f"Rejected {spk_dir.name} model={model_name} snr={snr_db} "
+                        f"babble={num_babble} RTF={rtf:.3f}"
+                    )
+                    continue
+
+                si_sdr = compute_si_sdr(tse_result, target_wav).item()
+                results.append(
+                    [spk_dir.name, model_name, snr_db, num_babble, si_sdr, rtf]
                 )
-                continue
-
-            si_sdr = compute_si_sdr(tse_result, target_wav).item()
-            results.append(
-                [spk_dir.name, snr_db, num_babble, si_sdr, rtf]
-            )
-            print(
-                f"speaker={spk_dir.name} snr={snr_db} babble={num_babble} "
-                f"si_sdr={si_sdr:.2f} rtf={rtf:.3f}"
-            )
+                print(
+                    f"speaker={spk_dir.name} model={model_name} snr={snr_db} babble={num_babble} "
+                    f"si_sdr={si_sdr:.2f} rtf={rtf:.3f}"
+                )
 
     # Write results
     if results:
         csv_path = args.out_dir / "results.csv"
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["speaker", "snr_db", "num_babble", "si_sdr", "rtf"])
+            writer.writerow(["speaker", "model", "snr_db", "num_babble", "si_sdr", "rtf"])
             writer.writerows(results)
 
 
