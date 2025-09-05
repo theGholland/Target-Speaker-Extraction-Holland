@@ -88,12 +88,14 @@ def mix_at_snr(target, noise, snr_db: float):
     return target + noise
 
 
-def ecapa_embedding(model, wav, sr: int, device):
+def ecapa_embedding(model, wav, device):
     """Compute speaker embedding using a pre-loaded model."""
     import torch
 
     with torch.no_grad():
-        emb = model.get_embedding(wav.to(device), sr=sr)
+        wav = wav.unsqueeze(0).to(device)
+        length = torch.tensor([wav.shape[-1]], device=device)
+        _, emb = model.forward(input_signal=wav, input_signal_length=length)
         emb = torch.nn.functional.normalize(emb.squeeze(0), dim=-1)
     return emb
 
@@ -238,8 +240,8 @@ def main() -> None:
                 processing_time = time.time() - start
                 est_sources = est_sources.cpu()
 
-                enroll_emb = ecapa_embedding(spk_model, enroll_wav, sr, device)
-                est_embs = [ecapa_embedding(spk_model, src, sr, device) for src in est_sources]
+                enroll_emb = ecapa_embedding(spk_model, enroll_wav, device)
+                est_embs = [ecapa_embedding(spk_model, src, device) for src in est_sources]
                 scores = [
                     torch.nn.functional.cosine_similarity(enroll_emb, emb, dim=0).item()
                     for emb in est_embs
