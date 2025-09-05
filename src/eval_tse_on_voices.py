@@ -185,13 +185,13 @@ def main() -> None:
             from asteroid.models import DPRNNTasNet
 
             sep_model = DPRNNTasNet.from_pretrained(
-                "mpariente/DPRNNTasNet_WHAM!_sepclean_16k"
+                "mpariente/DPRNNTasNet_WHAM_sepclean_16k"
             ).to(device)
         elif model_name == "convtasnet":
             from asteroid.models import ConvTasNet
 
             sep_model = ConvTasNet.from_pretrained(
-                "mpariente/ConvTasNet_WHAM!_sepclean_16k"
+                "mpariente/ConvTasNet_WHAM_sepclean_16k"
             ).to(device)
         elif model_name == "demucs":
             from demucs.pretrained import get_model
