@@ -197,7 +197,13 @@ def main() -> None:
             ).to(device)
         elif model_name == "demucs":
             from huggingface_hub import hf_hub_download
-            from openvino.runtime import Core
+            try:
+                from openvino.runtime import Core
+            except ModuleNotFoundError as exc:
+                raise ModuleNotFoundError(
+                    "Running the 'demucs' separation model requires the 'openvino' "
+                    "package. Install it with `pip install openvino`."
+                ) from exc
 
             core = Core()
             xml_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.xml")
@@ -206,7 +212,8 @@ def main() -> None:
             sep_model = core.compile_model(ov_model, "CPU")
         else:
             raise ValueError(f"Unknown separation model: {model_name}")
-        sep_model.eval()
+        if hasattr(sep_model, "eval"):
+            sep_model.eval()
 
         for snr_db, num_babble in combos:
             for idx, spk_dir in enumerate(speakers):
