@@ -3,7 +3,6 @@
 
 import argparse
 import csv
-import itertools
 import random
 import time
 from pathlib import Path
@@ -36,18 +35,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--snr_list",
         type=str,
-        help="Comma-separated list of SNR values for sweeping",
+        help="Comma-separated SNR values; zipped with babble_list and sep_models",
     )
     parser.add_argument(
         "--babble_list",
         type=str,
-        help="Comma-separated list of babble counts for sweeping",
+        help="Comma-separated babbler counts; zipped with snr_list and sep_models",
     )
     parser.add_argument(
         "--sep_models",
         type=str,
         default="dprnn",
-        help="Comma-separated list of separation models to evaluate (dprnn, convtasnet, demucs)",
+        help=(
+            "Comma-separated separation models (dprnn, convtasnet, demucs); "
+            "zipped with snr_list/babble_list when lists are used"
+        ),
     )
     parser.add_argument(
         "--limit",
@@ -250,6 +252,56 @@ def select_babblers(speakers: list, idx: int, num_babble: int):
     return other_speakers[:num_babble]
 
 
+def load_sep_model(model_name: str, device):
+    """Instantiate a separation model by name."""
+    if model_name == "dprnn":
+        from asteroid.models import DPRNNTasNet
+
+        model = DPRNNTasNet.from_pretrained(
+            "julien-c/DPRNNTasNet-ks16_WHAM_sepclean"
+        ).to(device)
+    elif model_name == "convtasnet":
+        from asteroid.models import ConvTasNet
+
+        model = ConvTasNet.from_pretrained(
+            "JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k"
+        ).to(device)
+    elif model_name == "demucs":
+        from huggingface_hub import hf_hub_download
+        try:
+            from openvino.runtime import Core
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "Running the 'demucs' separation model requires the 'openvino' "
+                "package. Install it with `pip install openvino`."
+            ) from exc
+
+        core = Core()
+        repo_id = "Intel/demucs-openvino"
+        variant = "htdemucs_v4"
+        local_dir = "models/demucs_openvino"
+        xml_path = hf_hub_download(
+            repo_id=repo_id,
+            filename="htdemucs_fwd.xml",
+            subfolder=variant,
+            local_dir=local_dir,
+        )
+        hf_hub_download(
+            repo_id=repo_id,
+            filename="htdemucs_fwd.bin",
+            subfolder=variant,
+            local_dir=local_dir,
+        )
+        ov_model = core.read_model(xml_path)
+        model = core.compile_model(ov_model, "CPU")
+    else:
+        raise ValueError(f"Unknown separation model: {model_name}")
+
+    if hasattr(model, "eval"):
+        model.eval()
+    return model
+
+
 def main() -> None:
     args = parse_args()
 
@@ -260,25 +312,34 @@ def main() -> None:
     device = get_device()
 
     # Determine evaluation combinations
+    sep_models = [m.strip().lower() for m in args.sep_models.split(",")]
     if args.snr_db is not None and args.num_babble_voices is not None:
-        combos = [(args.snr_db, args.num_babble_voices)]
+        combos = [(args.snr_db, args.num_babble_voices, sep_models[0])]
     elif args.snr_list and args.babble_list:
         snr_values = [float(s) for s in args.snr_list.split(",")]
         babble_values = [int(b) for b in args.babble_list.split(",")]
-        combos = list(itertools.product(snr_values, babble_values))
+        if len(snr_values) != len(babble_values):
+            raise ValueError("snr_list and babble_list must have the same length")
+        if len(sep_models) == 1:
+            models = sep_models * len(snr_values)
+        elif len(sep_models) == len(snr_values):
+            models = sep_models
+        else:
+            raise ValueError(
+                "sep_models must have length 1 or match snr_list/babble_list length"
+            )
+        combos = list(zip(snr_values, babble_values, models))
     else:
         raise ValueError(
             "Specify either --snr_db and --num_babble_voices or --snr_list and --babble_list"
         )
 
-    sep_models = [m.strip().lower() for m in args.sep_models.split(",")]
-
-    # Gather speakers
+    # Gather speakers and pick one at random
     speakers = [p for p in args.voices_dir.iterdir() if p.is_dir()]
     rng = random.Random(args.seed)
     rng.shuffle(speakers)
-    if args.limit:
-        speakers = speakers[: args.limit]
+    chosen_speaker = speakers[0]
+    speakers = [chosen_speaker] + [s for s in speakers[1:]]  # keep list for babblers
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     results = []
@@ -288,112 +349,124 @@ def main() -> None:
     ).to(device)
     spk_model.eval()
 
-    for model_name in sep_models:
-        if model_name == "dprnn":
-            from asteroid.models import DPRNNTasNet
+    loaded_models: dict[str, object] = {}
 
-            sep_model = DPRNNTasNet.from_pretrained(
-                "julien-c/DPRNNTasNet-ks16_WHAM_sepclean"
-            ).to(device)
-        elif model_name == "convtasnet":
-            from asteroid.models import ConvTasNet
+    for snr_db, num_babble, model_name in combos:
+        if model_name not in loaded_models:
+            loaded_models[model_name] = load_sep_model(model_name, device)
+        sep_model = loaded_models[model_name]
 
-            sep_model = ConvTasNet.from_pretrained(
-                "JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k"
-            ).to(device)
-        elif model_name == "demucs":
-            from huggingface_hub import hf_hub_download
-            try:
-                from openvino.runtime import Core
-            except ModuleNotFoundError as exc:
-                raise ModuleNotFoundError(
-                    "Running the 'demucs' separation model requires the 'openvino' "
-                    "package. Install it with `pip install openvino`."
-                ) from exc
+        enroll_wav, sr = load_audio(chosen_speaker / "enroll.wav")
+        target_wav, sr = load_audio(chosen_speaker / "target.wav", sr)
 
-            core = Core()
-            repo_id = "Intel/demucs-openvino"
-            variant = "htdemucs_v4"
-            local_dir = "models/demucs_openvino"
-            xml_path = hf_hub_download(
-                repo_id=repo_id,
-                filename="htdemucs_fwd.xml",
-                subfolder=variant,
-                local_dir=local_dir,
-            )
-            hf_hub_download(
-                repo_id=repo_id,
-                filename="htdemucs_fwd.bin",
-                subfolder=variant,
-                local_dir=local_dir,
-            )
-            ov_model = core.read_model(xml_path)
-            sep_model = core.compile_model(ov_model, "CPU")
+        # Select babble speakers deterministically after shuffle
+        babbler_dirs = select_babblers(speakers, 0, num_babble)
+        babble_wavs = [load_audio(b / "target.wav", sr)[0] for b in babbler_dirs]
+        babble = compose_babble(babble_wavs, target_wav.shape[-1])
+
+        mixture = mix_at_snr(target_wav, babble, snr_db)
+        peak = mixture.abs().max().item()
+        if peak > 1.0:
+            mixture = mixture / peak * 0.9  # apply headroom
+
+        audio_duration = mixture.shape[-1] / sr
+
+        start = time.time()
+        if model_name == "demucs":
+            est_sources = demucs_openvino_separate(sep_model, mixture, sr)
         else:
-            raise ValueError(f"Unknown separation model: {model_name}")
-        if hasattr(sep_model, "eval"):
-            sep_model.eval()
+            with torch.no_grad():
+                est_sources = sep_model(mixture.unsqueeze(0).to(device)).squeeze(0)
+        processing_time = time.time() - start
+        est_sources = est_sources.cpu()
 
-        for snr_db, num_babble in combos:
-            for idx, spk_dir in enumerate(speakers):
-                enroll_wav, sr = load_audio(spk_dir / "enroll.wav")
-                target_wav, sr = load_audio(spk_dir / "target.wav", sr)
+        enroll_emb = ecapa_embedding(spk_model, enroll_wav, device)
+        est_embs = [ecapa_embedding(spk_model, src, device) for src in est_sources]
+        scores = [
+            torch.nn.functional.cosine_similarity(enroll_emb, emb, dim=0).item()
+            for emb in est_embs
+        ]
+        chosen_idx = int(torch.argmax(torch.tensor(scores)))
+        tse_result = est_sources[chosen_idx]
 
-                # Select babble speakers deterministically
-                babbler_dirs = select_babblers(speakers, idx, num_babble)
-                babble_wavs = [
-                    load_audio(b / "target.wav", sr)[0] for b in babbler_dirs
-                ]
-                babble = compose_babble(babble_wavs, target_wav.shape[-1])
+        rtf = processing_time / audio_duration if audio_duration > 0 else float("inf")
+        if rtf > 0.5:
+            print(
+                f"Rejected {chosen_speaker.name} model={model_name} snr={snr_db} "
+                f"babble={num_babble} RTF={rtf:.3f}"
+            )
+            continue
 
-                mixture = mix_at_snr(target_wav, babble, snr_db)
-                peak = mixture.abs().max().item()
-                if peak > 1.0:
-                    mixture = mixture / peak * 0.9  # apply headroom
+        si_sdr = compute_si_sdr(tse_result, target_wav).item()
 
-                audio_duration = mixture.shape[-1] / sr
+        out_dir = args.out_dir / f"snr_{snr_db}" / f"bab_{num_babble}" / chosen_speaker.name
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-                start = time.time()
-                if model_name == "demucs":
-                    est_sources = demucs_openvino_separate(sep_model, mixture, sr)
-                else:
-                    with torch.no_grad():
-                        est_sources = sep_model(mixture.unsqueeze(0).to(device)).squeeze(0)
-                processing_time = time.time() - start
-                est_sources = est_sources.cpu()
+        import torchaudio
+        torchaudio.save(out_dir / "mixture.wav", mixture.unsqueeze(0), sr)
+        torchaudio.save(out_dir / "tse_result.wav", tse_result.unsqueeze(0), sr)
+        torchaudio.save(out_dir / "babble.wav", babble.unsqueeze(0), sr)
 
-                enroll_emb = ecapa_embedding(spk_model, enroll_wav, device)
-                est_embs = [ecapa_embedding(spk_model, src, device) for src in est_sources]
-                scores = [
-                    torch.nn.functional.cosine_similarity(enroll_emb, emb, dim=0).item()
-                    for emb in est_embs
-                ]
-                chosen_idx = int(torch.argmax(torch.tensor(scores)))
-                tse_result = est_sources[chosen_idx]
+        def save_waveform_png(wav, path):
+            import matplotlib.pyplot as plt
+            import numpy as np
 
-                rtf = processing_time / audio_duration if audio_duration > 0 else float("inf")
-                if rtf > 0.5:
-                    print(
-                        f"Rejected {spk_dir.name} model={model_name} snr={snr_db} "
-                        f"babble={num_babble} RTF={rtf:.3f}"
-                    )
-                    continue
+            plt.figure(figsize=(2, 1))
+            t = np.linspace(0, wav.shape[-1] / sr, wav.shape[-1])
+            plt.plot(t, wav.numpy())
+            plt.axis("off")
+            plt.tight_layout()
+            plt.savefig(path, dpi=100)
+            plt.close()
 
-                si_sdr = compute_si_sdr(tse_result, target_wav).item()
-                results.append(
-                    [spk_dir.name, model_name, snr_db, num_babble, si_sdr, rtf]
-                )
-                print(
-                    f"speaker={spk_dir.name} model={model_name} snr={snr_db} babble={num_babble} "
-                    f"si_sdr={si_sdr:.2f} rtf={rtf:.3f}"
-                )
+        save_waveform_png(mixture, out_dir / "mixture.png")
+        save_waveform_png(tse_result, out_dir / "tse_result.png")
+
+        mixture_path = str(out_dir / "mixture.wav")
+        result_path = str(out_dir / "tse_result.wav")
+        similarity0 = scores[0] if len(scores) > 0 else float("nan")
+        similarity1 = scores[1] if len(scores) > 1 else float("nan")
+
+        results.append(
+            [
+                chosen_speaker.name,
+                model_name,
+                snr_db,
+                num_babble,
+                similarity0,
+                similarity1,
+                chosen_idx,
+                si_sdr,
+                rtf,
+                mixture_path,
+                result_path,
+            ]
+        )
+        print(
+            f"speaker={chosen_speaker.name} model={model_name} snr={snr_db} babble={num_babble} "
+            f"si_sdr={si_sdr:.2f} rtf={rtf:.3f}"
+        )
 
     # Write results
     if results:
         csv_path = args.out_dir / "results.csv"
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["speaker", "model", "snr_db", "num_babble", "si_sdr", "rtf"])
+            writer.writerow(
+                [
+                    "speaker_id",
+                    "model",
+                    "snr_db",
+                    "num_babble",
+                    "similarity0",
+                    "similarity1",
+                    "picked",
+                    "si_sdr_target",
+                    "rtf",
+                    "mixture_path",
+                    "result_path",
+                ]
+            )
             writer.writerows(results)
 
 

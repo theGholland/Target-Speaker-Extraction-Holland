@@ -4,3 +4,4 @@ asteroid==0.7.0
 nemo_toolkit[asr]==2.4.0
 huggingface_hub
 openvino==2024.1.0
+matplotlib
