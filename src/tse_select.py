@@ -8,6 +8,7 @@ import torchaudio
 from pathlib import Path
 
 from device_utils import get_device
+from eval_tse_on_voices import demucs_openvino_separate
 
 
 def load_audio(path: str, target_sr: Optional[int] = None) -> tuple[torch.Tensor, int]:
@@ -178,9 +179,7 @@ def main():
         ov_model = core.read_model(xml_path)
         model = core.compile_model(ov_model, "CPU")
         start = time.time()
-        ov_input = mixture.unsqueeze(0).unsqueeze(0).numpy()
-        ov_output = model([ov_input])[model.output(0)]
-        est_sources = torch.from_numpy(ov_output)
+        est_sources = demucs_openvino_separate(model, mixture, sr)
 
     processing_time = time.time() - start
     est_sources = est_sources.squeeze(0).cpu()
@@ -201,17 +200,17 @@ def main():
     out_dir = os.path.dirname(args.target)
     torchaudio.save(
         os.path.join(out_dir, "sep_source0.wav"),
-        est_sources[0][..., : target_wav.shape[-1]].unsqueeze(0),
+        est_sources[0].unsqueeze(0),
         sr,
     )
     torchaudio.save(
         os.path.join(out_dir, "sep_source1.wav"),
-        est_sources[1][..., : target_wav.shape[-1]].unsqueeze(0),
+        est_sources[1].unsqueeze(0),
         sr,
     )
     torchaudio.save(
         os.path.join(out_dir, "tse_result.wav"),
-        tse_result[..., : target_wav.shape[-1]].unsqueeze(0),
+        tse_result.unsqueeze(0),
         sr,
     )
 
@@ -220,9 +219,7 @@ def main():
     print(f"Similarity scores: {scores}")
     print(f"Chosen source: {chosen_idx}")
     if args.target:
-        si_sdr_value = compute_si_sdr(
-            tse_result[..., : target_wav.shape[-1]], target_wav
-        )
+        si_sdr_value = compute_si_sdr(tse_result, target_wav)
         print(f"SI-SDR: {si_sdr_value:.2f} dB")
     print(f"RTF: {rtf:.3f}")
     print(f"Processing time: {processing_time:.2f} s for {audio_duration:.2f} s of audio")
