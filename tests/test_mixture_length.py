@@ -3,6 +3,7 @@ from pathlib import Path
 
 import torch
 import torchaudio
+import pytest
 
 # Add src directory to sys.path for importing tse_select
 sys.path.append(str(Path(__file__).resolve().parent.parent / "src"))
@@ -36,3 +37,14 @@ def test_mix_long_target_short_noise(tmp_path):
     # compute_si_sdr should operate without size mismatch
     val = compute_si_sdr(loaded_mix.squeeze(0), loaded_tgt.squeeze(0))
     float(val)  # should be convertible to float without error
+
+
+def test_compute_si_sdr_trims_and_warns():
+    est = torch.randn(1000)
+    ref = torch.randn(800)
+
+    with pytest.warns(UserWarning):
+        val = compute_si_sdr(est, ref)
+
+    expected = compute_si_sdr(est[:800], ref)
+    assert torch.isclose(val, expected)
