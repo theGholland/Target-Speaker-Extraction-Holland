@@ -5,10 +5,13 @@ import argparse
 import csv
 import random
 import time
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+import torch
+import torchaudio
 
 from device_utils import get_device
 
@@ -145,6 +148,30 @@ def compute_si_sdr(estimate, reference) -> float:
     s = torch.dot(estimate, reference) / torch.dot(reference, reference) * reference
     e = estimate - s
     return 10 * torch.log10(torch.dot(s, s) / torch.dot(e, e))
+
+
+def word_error_rate(reference: str, hypothesis: str) -> float:
+    """Compute the word error rate between reference and hypothesis texts."""
+
+    ref_words = reference.strip().split()
+    hyp_words = hypothesis.strip().split()
+    # Initialize distance matrix
+    d = [[0] * (len(hyp_words) + 1) for _ in range(len(ref_words) + 1)]
+    for i in range(len(ref_words) + 1):
+        d[i][0] = i
+    for j in range(len(hyp_words) + 1):
+        d[0][j] = j
+
+    for i in range(1, len(ref_words) + 1):
+        for j in range(1, len(hyp_words) + 1):
+            cost = 0 if ref_words[i - 1] == hyp_words[j - 1] else 1
+            d[i][j] = min(
+                d[i - 1][j] + 1,  # deletion
+                d[i][j - 1] + 1,  # insertion
+                d[i - 1][j - 1] + cost,  # substitution
+            )
+
+    return d[-1][-1] / max(len(ref_words), 1)
 
 
 def demucs_openvino_separate(sep_model, wav, sr):
@@ -374,7 +401,6 @@ def load_sep_model(model_name: str, device):
 def main() -> None:
     args = parse_args()
 
-    import torch
     from nemo.collections.asr.models import EncDecSpeakerLabelModel
 
     # Determine device
@@ -433,6 +459,20 @@ def main() -> None:
         "ecapa_tdnn",
     ).to(device)
     spk_model.eval()
+
+    # Load speech-to-text model
+    asr_bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
+    asr_model = asr_bundle.get_model().to(device)
+    asr_model.eval()
+
+    def transcribe_text(wav, sr):
+        """Transcribe waveform using the loaded ASR model."""
+        if sr != asr_bundle.sample_rate:
+            wav = torchaudio.functional.resample(wav, sr, asr_bundle.sample_rate)
+            sr = asr_bundle.sample_rate
+        with torch.no_grad():
+            emissions, _ = asr_model(wav.unsqueeze(0).to(device))
+        return asr_bundle.decode(emissions.argmax(dim=-1))[0].lower().strip()
 
     loaded_models: dict[str, object] = {}
 
@@ -514,6 +554,15 @@ def main() -> None:
         save_waveform_png(mixture, out_dir / "mixture.png")
         save_waveform_png(tse_result, out_dir / "tse_result.png")
 
+        gt_path = chosen_speaker / "target.txt"
+        gt_text = gt_path.read_text().strip().lower()
+        shutil.copy(gt_path, out_dir / "target.txt")
+
+        mixture_text = transcribe_text(mixture, sr)
+        post_text = transcribe_text(tse_result, sr)
+        mix_ratio = 1.0 - word_error_rate(gt_text, mixture_text)
+        post_ratio = 1.0 - word_error_rate(gt_text, post_text)
+
         mixture_path = str(out_dir / "mixture.wav")
         result_path = str(out_dir / "tse_result.wav")
         similarity0 = scores[0] if len(scores) > 0 else float("nan")
@@ -532,11 +581,19 @@ def main() -> None:
                 rtf,
                 mixture_path,
                 result_path,
+                mixture_text,
+                post_text,
+                gt_text,
+                mix_ratio,
+                post_ratio,
             ]
         )
         print(
             f"speaker={chosen_speaker.name} model={model_name} snr={snr_db} babble={num_babble} "
-            f"si_sdr={si_sdr:.2f} rtf={rtf:.3f}"
+            f"si_sdr={si_sdr:.2f} rtf={rtf:.3f} mix/gt_acc={mix_ratio:.3f} post/gt_acc={post_ratio:.3f}"
+        )
+        print(
+            f"mixture/GT accuracy: {mix_ratio:.3f}, post-processing/GT accuracy: {post_ratio:.3f}"
         )
 
     # Write results
@@ -557,6 +614,11 @@ def main() -> None:
                     "rtf",
                     "mixture_path",
                     "result_path",
+                    "mixture_text",
+                    "post_text",
+                    "gt_text",
+                    "mixture_gt_ratio",
+                    "post_gt_ratio",
                 ]
             )
             writer.writerows(results)

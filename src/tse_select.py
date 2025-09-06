@@ -8,6 +8,8 @@ import torch
 import torchaudio
 from pathlib import Path
 
+import shutil
+
 from device_utils import get_device
 from eval_tse_on_voices import demucs_openvino_separate
 
@@ -127,6 +129,27 @@ def compute_si_sdr(estimate: torch.Tensor, reference: torch.Tensor) -> float:
     return 10 * torch.log10(torch.dot(s, s) / torch.dot(e, e))
 
 
+def word_error_rate(reference: str, hypothesis: str) -> float:
+    """Compute the word error rate between reference and hypothesis texts."""
+
+    ref_words = reference.strip().split()
+    hyp_words = hypothesis.strip().split()
+    d = [[0] * (len(hyp_words) + 1) for _ in range(len(ref_words) + 1)]
+    for i in range(len(ref_words) + 1):
+        d[i][0] = i
+    for j in range(len(hyp_words) + 1):
+        d[0][j] = j
+    for i in range(1, len(ref_words) + 1):
+        for j in range(1, len(hyp_words) + 1):
+            cost = 0 if ref_words[i - 1] == hyp_words[j - 1] else 1
+            d[i][j] = min(
+                d[i - 1][j] + 1,
+                d[i][j - 1] + 1,
+                d[i - 1][j - 1] + cost,
+            )
+    return d[-1][-1] / max(len(ref_words), 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Target speaker extraction by selection")
     parser.add_argument("--target", type=str, required=True, help="Path to clean target/enrollment audio")
@@ -147,6 +170,11 @@ def main():
         choices=["dprnn", "convtasnet", "demucs"],
         default="dprnn",
         help="Separation model to use",
+    )
+    parser.add_argument(
+        "--gt_text",
+        type=str,
+        help="Path to ground truth transcript (defaults to target with .txt)",
     )
     args = parser.parse_args()
 
@@ -275,8 +303,37 @@ def main():
         tse_result.unsqueeze(0),
         sr,
     )
+    rtf = processing_time / audio_duration if audio_duration > 0 else float("inf")
 
-    rtf = processing_time / audio_duration if audio_duration > 0 else float('inf')
+    gt_path = Path(args.gt_text) if args.gt_text else Path(args.target).with_suffix(".txt")
+    if gt_path.exists():
+        asr_bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
+        asr_model = asr_bundle.get_model().to(device)
+        asr_model.eval()
+
+        def transcribe(wav, sr):
+            if sr != asr_bundle.sample_rate:
+                wav = torchaudio.functional.resample(wav, sr, asr_bundle.sample_rate)
+            with torch.no_grad():
+                emissions, _ = asr_model(wav.unsqueeze(0).to(device))
+            return asr_bundle.decode(emissions.argmax(dim=-1))[0].lower().strip()
+
+        gt_text = gt_path.read_text().strip().lower()
+        mixture_text = transcribe(mixture, sr)
+        result_text = transcribe(tse_result, sr)
+        mix_ratio = 1.0 - word_error_rate(gt_text, mixture_text)
+        post_ratio = 1.0 - word_error_rate(gt_text, result_text)
+
+        out_gt = Path(out_dir) / "target.txt"
+        if not out_gt.exists() or gt_path.resolve() != out_gt.resolve():
+            shutil.copy(gt_path, out_gt)
+        Path(out_dir, "mixture.txt").write_text(mixture_text + "\n")
+        Path(out_dir, "tse_result.txt").write_text(result_text + "\n")
+
+        print(f"mixture/GT accuracy: {mix_ratio:.3f}")
+        print(f"post-processing/GT accuracy: {post_ratio:.3f}")
+    else:
+        print(f"Ground truth text not found at {gt_path}; skipping ASR evaluation.")
 
     print(f"Similarity scores: {scores}")
     print(f"Chosen source: {chosen_idx}")
@@ -284,7 +341,9 @@ def main():
         si_sdr_value = compute_si_sdr(tse_result, target_wav)
         print(f"SI-SDR: {si_sdr_value:.2f} dB")
     print(f"RTF: {rtf:.3f}")
-    print(f"Processing time: {processing_time:.2f} s for {audio_duration:.2f} s of audio")
+    print(
+        f"Processing time: {processing_time:.2f} s for {audio_duration:.2f} s of audio"
+    )
 
 
 if __name__ == "__main__":
