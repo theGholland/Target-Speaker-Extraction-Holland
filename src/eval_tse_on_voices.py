@@ -136,6 +136,9 @@ def demucs_openvino_separate(sep_model, wav, sr):
     import torch
     import torchaudio
 
+    orig_sr = sr
+    orig_len = wav.shape[-1]
+
     target_sr = 44100
     if sr != target_sr:
         wav = torchaudio.functional.resample(wav, sr, target_sr)
@@ -191,6 +194,11 @@ def demucs_openvino_separate(sep_model, wav, sr):
         window=window,
         length=seg_length,
     )
+
+    est = est[..., : int(orig_len * target_sr / orig_sr)]
+    if orig_sr != target_sr:
+        est = torchaudio.functional.resample(est, target_sr, orig_sr)
+    est = est[..., :orig_len]
 
     return est
 
