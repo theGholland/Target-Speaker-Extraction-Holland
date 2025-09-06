@@ -19,7 +19,7 @@ pip install -r requirements.txt
 
 Use `prepare_voices.py` to build a directory of speaker voices from the LibriSpeech dataset.
 The script downloads the specified subset if it is not already present and creates a voice
-bank with enrollment and target audio for each speaker.
+bank with enrollment and target audio (plus matching transcripts) for each speaker.
 
 ```bash
 python src/prepare_voices.py --num_speakers 10 --subset test-clean
@@ -41,7 +41,9 @@ Resulting structure:
 data/voices/
   ├── <speaker_id>/
   │   ├── enroll.wav
-  │   └── target.wav
+  │   ├── enroll.txt
+  │   ├── target.wav
+  │   └── target.txt
   └── ...
 ```
 

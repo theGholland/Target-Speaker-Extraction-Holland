@@ -68,8 +68,10 @@ def build_voice_bank(args: argparse.Namespace) -> None:
 
     by_speaker = {}
     for i in indices:
-        waveform, sample_rate, _transcript, speaker_id, _chapter_id, _utterance_id = dataset[i]
-        by_speaker.setdefault(str(speaker_id), []).append((waveform, sample_rate))
+        waveform, sample_rate, transcript, speaker_id, _chapter_id, _utterance_id = dataset[i]
+        by_speaker.setdefault(str(speaker_id), []).append(
+            (waveform, sample_rate, transcript)
+        )
 
     chosen_speakers = random.sample(list(by_speaker.keys()), k=min(args.num_speakers, len(by_speaker)))
 
@@ -82,13 +84,15 @@ def build_voice_bank(args: argparse.Namespace) -> None:
             continue
 
         random.shuffle(utterances)
-        target_waveform, sr = utterances.pop()
+        target_waveform, sr, target_transcript = utterances.pop()
         enroll_waveforms = []
+        enroll_transcripts = []
         total_seconds = 0.0
 
         while utterances and total_seconds < args.min_enroll_sec:
-            w, sr = utterances.pop()
+            w, sr, transcript = utterances.pop()
             enroll_waveforms.append(w)
+            enroll_transcripts.append(transcript)
             total_seconds += w.shape[1] / sr
 
         if total_seconds < args.min_enroll_sec:
@@ -104,6 +108,8 @@ def build_voice_bank(args: argparse.Namespace) -> None:
         speaker_dir.mkdir(parents=True, exist_ok=True)
         torchaudio.save(speaker_dir / "enroll.wav", enroll_wave, sr)
         torchaudio.save(speaker_dir / "target.wav", target_waveform, sr)
+        (speaker_dir / "enroll.txt").write_text(" ".join(enroll_transcripts) + "\n")
+        (speaker_dir / "target.txt").write_text(target_transcript + "\n")
 
 
 if __name__ == "__main__":
