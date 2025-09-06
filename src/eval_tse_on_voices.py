@@ -139,9 +139,15 @@ def demucs_openvino_separate(sep_model, wav, sr):
         wav = torchaudio.functional.resample(wav, sr, target_sr)
         sr = target_sr
 
-    # Demucs OpenVINO model was exported for 7.8 s segments (336 frames with
-    # hop length 1024).
-    seg_length = 336 * 1024
+    n_fft = 4096
+    hop = 1024
+    n_frames = 336
+
+    # Demucs OpenVINO model was exported with 336 STFT frames. With
+    # ``center=True`` below, ``torch.stft`` adds ``n_fft // 2`` padding on
+    # both sides, yielding one extra frame unless the waveform length is
+    # ``(n_frames - 1) * hop``.
+    seg_length = (n_frames - 1) * hop
     if wav.shape[-1] < seg_length:
         wav = torch.nn.functional.pad(wav, (0, seg_length - wav.shape[-1]))
     else:
@@ -150,8 +156,6 @@ def demucs_openvino_separate(sep_model, wav, sr):
     # create stereo by duplicating the mono track
     stereo = wav.repeat(2, 1)
 
-    n_fft = 4096
-    hop = 1024
     window = torch.hann_window(n_fft)
     stft = torch.stft(
         stereo,
