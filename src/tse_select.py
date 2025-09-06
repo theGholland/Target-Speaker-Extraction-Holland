@@ -27,6 +27,8 @@ def mix_at_snr(target: torch.Tensor, noise: torch.Tensor, snr_db: float) -> torc
     noise = noise[..., :L]
     target_power = target.pow(2).mean()
     noise_power = noise.pow(2).mean()
+    if noise_power == 0:
+        return target
     scale = torch.sqrt(target_power / noise_power) * (10 ** (-snr_db / 20))
     noise = noise * scale
     return target + noise
@@ -126,6 +128,10 @@ def main():
 
     # Ensure the reference target matches the mixture length
     target_wav = target_wav[..., : mixture.shape[-1]]
+    peak = mixture.abs().max().item()
+    if peak > 1.0:
+        mixture = mixture / peak * 0.9
+
     audio_duration = mixture.shape[-1] / sr
 
     # Load separation model
