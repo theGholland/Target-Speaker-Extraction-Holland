@@ -393,8 +393,10 @@ def load_sep_model(model_name: str, device):
             subfolder=variant,
             local_dir=local_dir,
         )
+        if "GPU" not in core.available_devices:
+            raise RuntimeError("OpenVINO GPU device is required but not available")
         ov_model = core.read_model(xml_path)
-        model = core.compile_model(ov_model, "CPU")
+        model = core.compile_model(ov_model, "GPU")
     else:
         raise ValueError(f"Unknown separation model: {model_name}")
 
