@@ -179,8 +179,28 @@ def word_error_rate(reference: str, hypothesis: str) -> float:
     return d[-1][-1] / max(len(ref_words), 1)
 
 
-def demucs_openvino_separate(sep_model, wav, sr):
+def demucs_openvino_separate(
+    sep_model,
+    wav,
+    sr,
+    normalize: bool = True,
+    target_db: float = -16.0,
+):
     """Run Demucs OpenVINO model on a mono waveform.
+
+    Parameters
+    ----------
+    sep_model: openvino.runtime.CompiledModel
+        Loaded Demucs OpenVINO model.
+    wav: torch.Tensor
+        Mono waveform tensor.
+    sr: int
+        Sample rate of ``wav``.
+    normalize: bool, optional
+        If ``True`` (default) the input is RMS-normalized to ``target_db`` dBFS
+        before STFT and the inverse scaling is applied to the outputs.
+    target_db: float, optional
+        Target RMS level in dBFS used when ``normalize`` is ``True``.
 
     The OpenVINO export of Demucs expects a fixed-size complex STFT
     representation of stereo audio with shape ``[1, 4, 2048, 336]`` where the
@@ -216,6 +236,14 @@ def demucs_openvino_separate(sep_model, wav, sr):
         wav = torch.nn.functional.pad(wav, (0, seg_length - wav.shape[-1]))
     else:
         wav = wav[:seg_length]
+
+    if normalize:
+        rms = wav.pow(2).mean().sqrt()
+        target_rms = 10 ** (target_db / 20)
+        scale = target_rms / rms if rms > 0 else 1.0
+        wav = wav * scale
+    else:
+        scale = 1.0
 
     # create stereo by duplicating the mono track
     stereo = wav.repeat(2, 1)
@@ -258,6 +286,9 @@ def demucs_openvino_separate(sep_model, wav, sr):
     if orig_sr != target_sr:
         est = torchaudio.functional.resample(est, target_sr, orig_sr)
     est = est[..., :orig_len]
+
+    if scale != 1.0:
+        est = est / scale
 
     return est
 
