@@ -2,6 +2,18 @@ import argparse
 from pathlib import Path
 import random
 
+
+# Valid subset names as expected by torchaudio.datasets.LIBRISPEECH
+LIBRISPEECH_SUBSETS = {
+    "train-clean-100",
+    "train-clean-360",
+    "train-other-500",
+    "dev-clean",
+    "dev-other",
+    "test-clean",
+    "test-other",
+}
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build a local voice bank using the LibriSpeech dataset."
@@ -48,6 +60,11 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if not (0 < args.limit <= 1):
         raise ValueError(f"--limit must be in (0, 1], got {args.limit}")
+    if args.subset not in LIBRISPEECH_SUBSETS:
+        valid = ", ".join(sorted(LIBRISPEECH_SUBSETS))
+        raise ValueError(
+            f"Invalid --subset '{args.subset}'. Valid options: {valid}"
+        )
     return args
 
 
