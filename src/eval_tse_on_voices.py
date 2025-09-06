@@ -179,119 +179,6 @@ def word_error_rate(reference: str, hypothesis: str) -> float:
     return d[-1][-1] / max(len(ref_words), 1)
 
 
-def demucs_openvino_separate(
-    sep_model,
-    wav,
-    sr,
-    normalize: bool = True,
-    target_db: float = -16.0,
-):
-    """Run Demucs OpenVINO model on a mono waveform.
-
-    Parameters
-    ----------
-    sep_model: openvino.runtime.CompiledModel
-        Loaded Demucs OpenVINO model.
-    wav: torch.Tensor
-        Mono waveform tensor.
-    sr: int
-        Sample rate of ``wav``.
-    normalize: bool, optional
-        If ``True`` (default) the input is RMS-normalized to ``target_db`` dBFS
-        before STFT and the inverse scaling is applied to the outputs.
-    target_db: float, optional
-        Target RMS level in dBFS used when ``normalize`` is ``True``.
-
-    The OpenVINO export of Demucs expects a fixed-size complex STFT
-    representation of stereo audio with shape ``[1, 4, 2048, 336]`` where the
-    second dimension stacks real and imaginary parts for each stereo channel.
-
-    This helper performs the required pre- and post-processing so callers can
-    simply provide a 1D waveform tensor. It mirrors the preprocessing used when
-    exporting the model and returns time-domain estimates for each separated
-    source as a tensor of shape ``(num_sources, num_samples)``.
-    """
-
-    import torch
-    import torchaudio
-
-    orig_sr = sr
-    orig_len = wav.shape[-1]
-
-    target_sr = 44100
-    if sr != target_sr:
-        wav = torchaudio.functional.resample(wav, sr, target_sr)
-        sr = target_sr
-
-    n_fft = 4096
-    hop = 1024
-    n_frames = 336
-
-    # Demucs OpenVINO model was exported with 336 STFT frames. With
-    # ``center=True`` below, ``torch.stft`` adds ``n_fft // 2`` padding on
-    # both sides, yielding one extra frame unless the waveform length is
-    # ``(n_frames - 1) * hop``.
-    seg_length = (n_frames - 1) * hop
-    if wav.shape[-1] < seg_length:
-        wav = torch.nn.functional.pad(wav, (0, seg_length - wav.shape[-1]))
-    else:
-        wav = wav[:seg_length]
-
-    if normalize:
-        rms = wav.pow(2).mean().sqrt()
-        target_rms = 10 ** (target_db / 20)
-        scale = target_rms / rms if rms > 0 else 1.0
-        wav = wav * scale
-    else:
-        scale = 1.0
-
-    # create stereo by duplicating the mono track
-    stereo = wav.repeat(2, 1)
-
-    window = torch.hann_window(n_fft)
-    stft = torch.stft(
-        stereo,
-        n_fft=n_fft,
-        hop_length=hop,
-        window=window,
-        return_complex=True,
-        center=True,
-    )
-    # Drop the Nyquist bin to match expected 2048 frequency bins
-    stft = stft[:, :-1, :]
-    spec = torch.cat([stft.real, stft.imag], dim=0).unsqueeze(0)
-
-    ov_output = sep_model([spec.cpu().numpy()])[sep_model.output(0)]
-    ov_output = torch.from_numpy(ov_output).squeeze(0)
-
-    # The model outputs real and imaginary parts concatenated on the channel
-    # dimension. Reconstruct the complex STFT for each estimated source.
-    half = ov_output.shape[0] // 2
-    real, imag = ov_output[:half], ov_output[half:]
-    complex_spec = torch.complex(real, imag)
-    # Restore the dropped Nyquist frequency bin for iSTFT
-    complex_spec = torch.cat(
-        [complex_spec, torch.zeros_like(complex_spec[:, :1, :])], dim=1
-    )
-
-    est = torch.istft(
-        complex_spec,
-        n_fft=n_fft,
-        hop_length=hop,
-        window=window,
-        length=seg_length,
-    )
-
-    est = est[..., : int(orig_len * target_sr / orig_sr)]
-    if orig_sr != target_sr:
-        est = torchaudio.functional.resample(est, target_sr, orig_sr)
-    est = est[..., :orig_len]
-
-    if scale != 1.0:
-        est = est / scale
-
-    return est
-
 
 def compose_babble(wavs: Iterable, length: int):
     """Create uniform babble by looping and level-equalizing input waves."""
@@ -399,35 +286,15 @@ def load_sep_model(model_name: str, device):
             "JorisCos/ConvTasNet_Libri2Mix_sepnoisy_16k"
         ).to(device)
     elif model_name == "demucs":
-        from huggingface_hub import hf_hub_download
         try:
-            from openvino.runtime import Core
-        except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                "Running the 'demucs' separation model requires the 'openvino' "
-                "package. Install it with `pip install openvino`."
-            ) from exc
+            from demucs.pretrained import get_model
+        except ModuleNotFoundError:
+            import subprocess, sys
 
-        core = Core()
-        repo_id = "Intel/demucs-openvino"
-        variant = "htdemucs_v4"
-        local_dir = "models/demucs_openvino"
-        xml_path = hf_hub_download(
-            repo_id=repo_id,
-            filename="htdemucs_fwd.xml",
-            subfolder=variant,
-            local_dir=local_dir,
-        )
-        hf_hub_download(
-            repo_id=repo_id,
-            filename="htdemucs_fwd.bin",
-            subfolder=variant,
-            local_dir=local_dir,
-        )
-        if "GPU" not in core.available_devices:
-            raise RuntimeError("OpenVINO GPU device is required but not available")
-        ov_model = core.read_model(xml_path)
-        model = core.compile_model(ov_model, "GPU")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "demucs"])
+            from demucs.pretrained import get_model
+
+        model = get_model(name="htdemucs").to(device)
     else:
         raise ValueError(f"Unknown separation model: {model_name}")
 
@@ -559,7 +426,12 @@ def main() -> None:
 
         start = time.time()
         if model_name == "demucs":
-            est_sources = demucs_openvino_separate(sep_model, mixture, sr)
+            from demucs.apply import apply_model
+
+            with torch.no_grad():
+                mix = mixture.unsqueeze(0).unsqueeze(0).to(device)
+                est_sources = apply_model(sep_model, mix, device=device)[0]
+                est_sources = est_sources.mean(dim=1)
         else:
             with torch.no_grad():
                 est_sources = sep_model(mixture.unsqueeze(0).to(device)).squeeze(0)
