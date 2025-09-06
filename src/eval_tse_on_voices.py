@@ -562,20 +562,18 @@ def main() -> None:
         torchaudio.save(out_dir / "tse_result.wav", tse_result.unsqueeze(0), sr)
         torchaudio.save(out_dir / "noise.wav", noise.unsqueeze(0), sr)
 
-        def save_waveform_png(wav, path):
+        def save_spectrogram_png(wav, path):
             import matplotlib.pyplot as plt
-            import numpy as np
 
             plt.figure(figsize=(2, 1))
-            t = np.linspace(0, wav.shape[-1] / sr, wav.shape[-1])
-            plt.plot(t, wav.numpy())
+            plt.specgram(wav.numpy(), Fs=sr, NFFT=512, noverlap=256, cmap="magma")
             plt.axis("off")
-            plt.tight_layout()
-            plt.savefig(path, dpi=100)
+            plt.tight_layout(pad=0)
+            plt.savefig(path, dpi=100, bbox_inches="tight", pad_inches=0)
             plt.close()
 
-        save_waveform_png(mixture, out_dir / "mixture.png")
-        save_waveform_png(tse_result, out_dir / "tse_result.png")
+        save_spectrogram_png(mixture, out_dir / "mixture.png")
+        save_spectrogram_png(tse_result, out_dir / "tse_result.png")
 
         gt_text = ""
         mixture_text = ""
