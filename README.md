@@ -63,18 +63,19 @@ Separated sources (`sep_source0.wav`, `sep_source1.wav`) and the selected result
 
 If a ground‑truth transcript is available, `tse_select.py` can also compare the
 automatic speech recognition (ASR) of the mixture and extracted audio against
-this reference. Pass `--gt_text` or place a `target.txt` next to the target
-audio. The script will copy the reference text to the output folder, transcribe
-`mixture.wav` and `tse_result.wav` with a Wav2Vec2 model, save the transcripts,
-and print accuracy ratios:
+this reference. Pass `--eval_text` and optionally `--gt_text` or place a
+`target.txt` next to the target audio. When enabled, the script will copy the
+reference text to the output folder, transcribe `mixture.wav` and
+`tse_result.wav` with a Wav2Vec2 model, save the transcripts, and print accuracy
+ratios:
 
 ```bash
 python src/tse_select.py --target path/to/clean.wav --noise path/to/noise.wav \
-       --gt_text path/to/clean.txt
+       --gt_text path/to/clean.txt --eval_text
 ```
 
 Console output will include labelled `mixture/GT` and `post-processing/GT`
-accuracy scores.
+accuracy scores when `--eval_text` is used.
 
 To test robustness to non-speech noise, provide a path to the [MUSAN dataset](https://www.openslr.org/17)
 and optionally choose a category such as `noise` or `music`:
@@ -92,15 +93,16 @@ quality. Each invocation creates a timestamped directory under `out_eval` named 
 current datetime down to milliseconds. A `results.csv` summarising the runs is written
 inside this directory along with one subfolder per run containing the audio waveforms and
 plots. Columns in `results.csv` include speaker, separation model, SNR, babble count,
-SI-SDR and RTF. When transcripts are available the script also records the ASR outputs
-for `mixture.wav` and `tse_result.wav`, the ground‑truth text, and accuracy ratios for
-mixture/GT and post-processing/GT comparisons. These appear in `results.csv` as
-`mixture_text`, `post_text`, `gt_text`, `mixture_gt_ratio`, and `post_gt_ratio`.
+SI-SDR and RTF. When `--eval_text` is supplied the script seeks speakers with
+`target.txt`, records the ASR outputs for `mixture.wav` and `tse_result.wav`, the
+ground‑truth text, and accuracy ratios for mixture/GT and post-processing/GT
+comparisons. These appear in `results.csv` as `mixture_text`, `post_text`, `gt_text`,
+`mixture_gt_ratio`, and `post_gt_ratio`.
 
 Evaluate a single condition:
 
 ```bash
-python src/eval_tse_on_voices.py --snr_db 0 --num_babble_voices 3
+python src/eval_tse_on_voices.py --snr_db 0 --num_babble_voices 3 --eval_text
 ```
 
 Sweep over multiple SNRs and babble counts:
@@ -134,10 +136,12 @@ the `htdemucs_v4` variant on first use.
 ## Text Evaluation
 
 Both `tse_select.py` and `eval_tse_on_voices.py` can score the quality of speech
-transcriptions when reference text is available.  Supply a ground‑truth transcript
-with `--gt_text` or by placing a `target.txt` file next to the target audio.  The
-scripts will transcribe `mixture.wav` and `tse_result.wav`, write the hypothesis
-texts alongside the audio, and compute accuracy ratios based on word error rate.
+transcriptions when reference text is available. This behavior is disabled by
+default. Enable it with `--eval_text` and supply a ground‑truth transcript with
+`--gt_text` or by placing a `target.txt` file next to the target audio. When
+enabled, the scripts transcribe `mixture.wav` and `tse_result.wav`, write the
+hypothesis texts alongside the audio, and compute accuracy ratios based on word
+error rate.
 
 For batch runs, these values are recorded in the `out_eval/<timestamp>/results.csv`
 file under the columns `mixture_text`, `post_text`, `gt_text`,
