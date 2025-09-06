@@ -534,7 +534,6 @@ def main() -> None:
         out_dir = timestamp_dir / f"run_{run_idx}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        import torchaudio
         torchaudio.save(out_dir / "mixture.wav", mixture.unsqueeze(0), sr)
         torchaudio.save(out_dir / "tse_result.wav", tse_result.unsqueeze(0), sr)
         torchaudio.save(out_dir / "noise.wav", noise.unsqueeze(0), sr)
