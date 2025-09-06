@@ -74,6 +74,10 @@ Sweep over different separation models:
 python src/eval_tse_on_voices.py --snr_db 0 --num_babble_voices 3 --sep_models "dprnn,convtasnet,demucs"
 ```
 
+The `demucs` separation model uses the OpenVINO export from the `Intel/demucs-openvino`
+repository. Ensure the `openvino` package is installed and note that the script downloads
+the `htdemucs_v4` variant on first use.
+
 ## Repository Layout
 
 ```

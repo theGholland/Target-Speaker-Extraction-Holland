@@ -206,9 +206,22 @@ def main() -> None:
                 ) from exc
 
             core = Core()
-            xml_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.xml")
-            bin_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.bin")
-            ov_model = core.read_model(xml_path, bin_path)
+            repo_id = "Intel/demucs-openvino"
+            variant = "htdemucs_v4"
+            local_dir = "models/demucs_openvino"
+            xml_path = hf_hub_download(
+                repo_id=repo_id,
+                filename="htdemucs_fwd.xml",
+                subfolder=variant,
+                local_dir=local_dir,
+            )
+            hf_hub_download(
+                repo_id=repo_id,
+                filename="htdemucs_fwd.bin",
+                subfolder=variant,
+                local_dir=local_dir,
+            )
+            ov_model = core.read_model(xml_path)
             sep_model = core.compile_model(ov_model, "CPU")
         else:
             raise ValueError(f"Unknown separation model: {model_name}")
