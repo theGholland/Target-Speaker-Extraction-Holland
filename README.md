@@ -134,7 +134,8 @@ the `htdemucs_v4` variant on first use.
 ## Makefile Targets
 
 Common workflows are wrapped in a Makefile.  Variables may be overridden on the command
-line or via the environment.
+line or via the environment.  The Makefile uses `python3` by default; choose a different
+interpreter with the `PYTHON` variable (e.g. `make eval PYTHON=python3.11`).
 
 Build a voice bank:
 

@@ -1,4 +1,5 @@
-PYTHON ?= python
+# Default Python interpreter; override with `make PYTHON=/path/to/python ...`
+PYTHON ?= python3
 
 VOICES_DIR ?= data/voices
 OUT_DIR ?= out_eval
