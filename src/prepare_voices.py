@@ -69,12 +69,19 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_voice_bank(args: argparse.Namespace) -> None:
+    """Download the dataset and extract a small voice bank."""
+
     # Import heavy dependencies lazily so that --help works without them.
     import torch
     import torchaudio
+    from tqdm import tqdm
 
     Path("data/LibriSpeech").mkdir(parents=True, exist_ok=True)
 
+    print(
+        f"Preparing LibriSpeech subset '{args.subset}'. "
+        "Download may take a while..."
+    )
     dataset = torchaudio.datasets.LIBRISPEECH(
         root="data/LibriSpeech", url=args.subset, download=True
     )
@@ -84,17 +91,19 @@ def build_voice_bank(args: argparse.Namespace) -> None:
     indices = list(range(usable_items))
 
     by_speaker = {}
-    for i in indices:
+    for i in tqdm(indices, desc="Collecting utterances", unit="file"):
         waveform, sample_rate, transcript, speaker_id, _chapter_id, _utterance_id = dataset[i]
         by_speaker.setdefault(str(speaker_id), []).append(
             (waveform, sample_rate, transcript)
         )
 
-    chosen_speakers = random.sample(list(by_speaker.keys()), k=min(args.num_speakers, len(by_speaker)))
+    chosen_speakers = random.sample(
+        list(by_speaker.keys()), k=min(args.num_speakers, len(by_speaker))
+    )
 
     args.out.mkdir(parents=True, exist_ok=True)
 
-    for speaker_id in chosen_speakers:
+    for speaker_id in tqdm(chosen_speakers, desc="Writing speakers", unit="spk"):
         utterances = by_speaker[speaker_id]
         if len(utterances) < 2:
             # Need at least two utterances for enroll and target
@@ -125,7 +134,9 @@ def build_voice_bank(args: argparse.Namespace) -> None:
         speaker_dir.mkdir(parents=True, exist_ok=True)
         torchaudio.save(speaker_dir / "enroll.wav", enroll_wave, sr)
         torchaudio.save(speaker_dir / "target.wav", target_waveform, sr)
-        (speaker_dir / "enroll.txt").write_text(" ".join(enroll_transcripts) + "\n")
+        (speaker_dir / "enroll.txt").write_text(
+            " ".join(enroll_transcripts) + "\n"
+        )
         (speaker_dir / "target.txt").write_text(target_transcript + "\n")
 
 
