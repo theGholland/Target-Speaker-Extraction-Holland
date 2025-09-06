@@ -87,7 +87,16 @@ src/                 # Project scripts
 ├── prepare_voices.py
 ├── eval_tse_on_voices.py
 └── tse_select.py
+tests/               # Unit tests
 ```
+
+## Tests
+
+The `tests` directory contains unit tests that validate the project's core utilities and
+command-line scripts. They cover device selection, audio mixing behavior, mixture length
+alignment, amplitude scaling, validation of `prepare_voices.py` arguments, and the
+selection of babbler speakers. Running these tests helps catch regressions in the data
+preparation and evaluation workflows.
 
 ## License
 
