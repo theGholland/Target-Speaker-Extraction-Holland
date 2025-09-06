@@ -129,10 +129,8 @@ Sweep over different separation models:
 python src/eval_tse_on_voices.py --snr_db 0 --num_babble_voices 3 --sep_models "dprnn,convtasnet,demucs"
 ```
 
-The `demucs` separation model uses the OpenVINO export from the `Intel/demucs-openvino`
-repository. Ensure the `openvino` package is installed **with GPU support**; the scripts
-compile the model for GPU execution and will error if a GPU device is unavailable. The
-`htdemucs_v4` variant is downloaded on first use.
+The `demucs` separation model is loaded from the PyTorch `demucs` package. If the
+package is not installed, the scripts will attempt to install it on first use.
 
 ## Text Evaluation
 

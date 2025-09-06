@@ -11,7 +11,6 @@ from pathlib import Path
 import shutil
 
 from device_utils import get_device
-from eval_tse_on_voices import demucs_openvino_separate
 
 
 def load_audio(path: str, target_sr: Optional[int] = None) -> tuple[torch.Tensor, int]:
@@ -246,40 +245,28 @@ def main():
         with torch.no_grad():
             est_sources = model(mixture.unsqueeze(0).to(device))
     else:  # demucs
-        from huggingface_hub import hf_hub_download
         try:
-            from openvino.runtime import Core
-        except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                "Running the 'demucs' separation model requires the 'openvino' "
-                "package. Install it with `pip install openvino`."
-            ) from exc
+            from demucs.pretrained import get_model
+            from demucs.apply import apply_model
+        except ModuleNotFoundError:
+            import subprocess, sys
 
-        core = Core()
-        repo_id = "Intel/demucs-openvino"
-        variant = "htdemucs_v4"
-        local_dir = "models/demucs_openvino"
-        xml_path = hf_hub_download(
-            repo_id=repo_id,
-            filename="htdemucs_fwd.xml",
-            subfolder=variant,
-            local_dir=local_dir,
-        )
-        hf_hub_download(
-            repo_id=repo_id,
-            filename="htdemucs_fwd.bin",
-            subfolder=variant,
-            local_dir=local_dir,
-        )
-        if "GPU" not in core.available_devices:
-            raise RuntimeError("OpenVINO GPU device is required but not available")
-        ov_model = core.read_model(xml_path)
-        model = core.compile_model(ov_model, "GPU")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "demucs"])
+            from demucs.pretrained import get_model
+            from demucs.apply import apply_model
+
+        model = get_model(name="htdemucs").to(device)
+        model.eval()
         start = time.time()
-        est_sources = demucs_openvino_separate(model, mixture, sr)
+        with torch.no_grad():
+            mix = mixture.unsqueeze(0).unsqueeze(0).to(device)
+            est_sources = apply_model(model, mix, device=device)[0]
+            est_sources = est_sources.mean(dim=1)
 
     processing_time = time.time() - start
-    est_sources = est_sources.squeeze(0).cpu()
+    if est_sources.dim() == 3:
+        est_sources = est_sources.squeeze(0)
+    est_sources = est_sources.cpu()
 
     # Compute embeddings using NeMo ECAPA
     from nemo.collections.asr.models import EncDecSpeakerLabelModel
