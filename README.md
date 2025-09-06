@@ -131,6 +131,18 @@ The `demucs` separation model uses the OpenVINO export from the `Intel/demucs-op
 repository. Ensure the `openvino` package is installed and note that the script downloads
 the `htdemucs_v4` variant on first use.
 
+## Text Evaluation
+
+Both `tse_select.py` and `eval_tse_on_voices.py` can score the quality of speech
+transcriptions when reference text is available.  Supply a ground‑truth transcript
+with `--gt_text` or by placing a `target.txt` file next to the target audio.  The
+scripts will transcribe `mixture.wav` and `tse_result.wav`, write the hypothesis
+texts alongside the audio, and compute accuracy ratios based on word error rate.
+
+For batch runs, these values are recorded in the `out_eval/<timestamp>/results.csv`
+file under the columns `mixture_text`, `post_text`, `gt_text`,
+`mixture_gt_ratio`, and `post_gt_ratio` for later analysis.
+
 ## Makefile Targets
 
 Common workflows are wrapped in a Makefile.  Variables may be overridden on the command
