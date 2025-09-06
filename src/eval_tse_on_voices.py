@@ -83,6 +83,8 @@ def mix_at_snr(target, noise, snr_db: float):
     noise = noise[..., :L]
     target_power = target.pow(2).mean()
     noise_power = noise.pow(2).mean()
+    if noise_power == 0:
+        return target
     scale = torch.sqrt(target_power / noise_power) * (10 ** (-snr_db / 20))
     noise = noise * scale
     return target + noise
