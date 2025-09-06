@@ -139,6 +139,38 @@ def compose_babble(wavs: Iterable, length: int):
     return babble
 
 
+def select_babblers(speakers: list, idx: int, num_babble: int):
+    """Select babble speaker directories excluding the current speaker.
+
+    Parameters
+    ----------
+    speakers: list
+        All available speaker directories.
+    idx: int
+        Index of the current target speaker in ``speakers``.
+    num_babble: int
+        Number of babble speakers to select.
+
+    Raises
+    ------
+    ValueError
+        If ``num_babble`` exceeds the number of other speakers.
+
+    Returns
+    -------
+    list
+        List of directories corresponding to babble speakers.
+    """
+
+    other_speakers = [s for i, s in enumerate(speakers) if i != idx]
+    if num_babble > len(other_speakers):
+        raise ValueError(
+            f"Requested {num_babble} babble voices but only "
+            f"{len(other_speakers)} other speakers available"
+        )
+    return other_speakers[:num_babble]
+
+
 def main() -> None:
     args = parse_args()
 
@@ -234,9 +266,7 @@ def main() -> None:
                 target_wav, sr = load_audio(spk_dir / "target.wav", sr)
 
                 # Select babble speakers deterministically
-                babbler_dirs = [
-                    speakers[(idx + 1 + j) % len(speakers)] for j in range(num_babble)
-                ]
+                babbler_dirs = select_babblers(speakers, idx, num_babble)
                 babble_wavs = [
                     load_audio(b / "target.wav", sr)[0] for b in babbler_dirs
                 ]
