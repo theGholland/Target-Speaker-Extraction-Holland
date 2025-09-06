@@ -139,6 +139,35 @@ def compose_babble(wavs: Iterable, length: int):
     return babble
 
 
+def select_babblers(speakers: list[Path], idx: int, num_babble: int) -> list[Path]:
+    """Select babble speaker directories deterministically without duplicates.
+
+    Ensures selected babblers are distinct from each other and the target speaker.
+    If the speaker pool is too small, the number of babblers is reduced and a
+    warning is printed.
+    """
+
+    target = speakers[idx]
+    babbler_dirs: list[Path] = []
+
+    # Iterate through candidates in a deterministic circular fashion
+    for j in range(len(speakers)):
+        if len(babbler_dirs) >= num_babble:
+            break
+        candidate = speakers[(idx + 1 + j) % len(speakers)]
+        if candidate == target or candidate in babbler_dirs:
+            continue
+        babbler_dirs.append(candidate)
+
+    if len(babbler_dirs) < num_babble:
+        print(
+            f"Warning: requested {num_babble} babble speakers but only "
+            f"{len(babbler_dirs)} available; reducing num_babble."
+        )
+
+    return babbler_dirs
+
+
 def main() -> None:
     args = parse_args()
 
@@ -233,10 +262,8 @@ def main() -> None:
                 enroll_wav, sr = load_audio(spk_dir / "enroll.wav")
                 target_wav, sr = load_audio(spk_dir / "target.wav", sr)
 
-                # Select babble speakers deterministically
-                babbler_dirs = [
-                    speakers[(idx + 1 + j) % len(speakers)] for j in range(num_babble)
-                ]
+                # Select babble speakers and ensure uniqueness
+                babbler_dirs = select_babblers(speakers, idx, num_babble)
                 babble_wavs = [
                     load_audio(b / "target.wav", sr)[0] for b in babbler_dirs
                 ]
