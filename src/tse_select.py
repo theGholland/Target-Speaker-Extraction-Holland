@@ -124,6 +124,8 @@ def main():
     else:
         mixture = target_wav
 
+    # Ensure the reference target matches the mixture length
+    target_wav = target_wav[..., : mixture.shape[-1]]
     audio_duration = mixture.shape[-1] / sr
 
     # Load separation model
@@ -178,16 +180,30 @@ def main():
 
     # Write output WAVs
     out_dir = os.path.dirname(args.target)
-    torchaudio.save(os.path.join(out_dir, "sep_source0.wav"), est_sources[0].unsqueeze(0), sr)
-    torchaudio.save(os.path.join(out_dir, "sep_source1.wav"), est_sources[1].unsqueeze(0), sr)
-    torchaudio.save(os.path.join(out_dir, "tse_result.wav"), tse_result.unsqueeze(0), sr)
+    torchaudio.save(
+        os.path.join(out_dir, "sep_source0.wav"),
+        est_sources[0][..., : target_wav.shape[-1]].unsqueeze(0),
+        sr,
+    )
+    torchaudio.save(
+        os.path.join(out_dir, "sep_source1.wav"),
+        est_sources[1][..., : target_wav.shape[-1]].unsqueeze(0),
+        sr,
+    )
+    torchaudio.save(
+        os.path.join(out_dir, "tse_result.wav"),
+        tse_result[..., : target_wav.shape[-1]].unsqueeze(0),
+        sr,
+    )
 
     rtf = processing_time / audio_duration if audio_duration > 0 else float('inf')
 
     print(f"Similarity scores: {scores}")
     print(f"Chosen source: {chosen_idx}")
     if args.target:
-        si_sdr_value = compute_si_sdr(tse_result, target_wav)
+        si_sdr_value = compute_si_sdr(
+            tse_result[..., : target_wav.shape[-1]], target_wav
+        )
         print(f"SI-SDR: {si_sdr_value:.2f} dB")
     print(f"RTF: {rtf:.3f}")
     print(f"Processing time: {processing_time:.2f} s for {audio_duration:.2f} s of audio")
