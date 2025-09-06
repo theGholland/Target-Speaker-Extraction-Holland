@@ -126,6 +126,10 @@ def main():
     else:
         mixture = target_wav
 
+    peak = mixture.abs().max().item()
+    if peak > 1.0:
+        mixture = mixture / peak * 0.9
+
     audio_duration = mixture.shape[-1] / sr
 
     # Load separation model
