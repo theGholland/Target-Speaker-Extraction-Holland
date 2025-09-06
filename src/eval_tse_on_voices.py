@@ -78,6 +78,11 @@ def parse_args() -> argparse.Namespace:
         choices=["noise", "music"],
         help="MUSAN subset to sample from when --musan_dir is provided",
     )
+    parser.add_argument(
+        "--eval_text",
+        action="store_true",
+        help="Evaluate ASR accuracy when target transcripts are available",
+    )
 
     args = parser.parse_args()
     if args.musan_dir and (args.num_babble_voices is not None or args.babble_list):
@@ -442,11 +447,18 @@ def main() -> None:
         )
 
     # Gather speakers and pick one at random
-    speakers = [p for p in args.voices_dir.iterdir() if p.is_dir()]
+    all_speakers = [p for p in args.voices_dir.iterdir() if p.is_dir()]
     rng = random.Random(args.seed)
-    rng.shuffle(speakers)
-    chosen_speaker = speakers[0]
-    speakers = [chosen_speaker] + [s for s in speakers[1:]]  # keep list for babblers
+    rng.shuffle(all_speakers)
+    if args.eval_text:
+        candidates = [s for s in all_speakers if (s / "target.txt").exists()]
+        if not candidates:
+            raise RuntimeError("No speakers with target.txt available for text evaluation")
+        chosen_speaker = candidates[0]
+        speakers = [chosen_speaker] + [s for s in all_speakers if s != chosen_speaker]
+    else:
+        chosen_speaker = all_speakers[0]
+        speakers = [chosen_speaker] + [s for s in all_speakers[1:]]
 
     timestamp_dir = (
         args.out_dir
@@ -460,19 +472,22 @@ def main() -> None:
     ).to(device)
     spk_model.eval()
 
-    # Load speech-to-text model
-    asr_bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
-    asr_model = asr_bundle.get_model().to(device)
-    asr_model.eval()
+    if args.eval_text:
+        asr_bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
+        asr_model = asr_bundle.get_model().to(device)
+        asr_model.eval()
 
-    def transcribe_text(wav, sr):
-        """Transcribe waveform using the loaded ASR model."""
-        if sr != asr_bundle.sample_rate:
-            wav = torchaudio.functional.resample(wav, sr, asr_bundle.sample_rate)
-            sr = asr_bundle.sample_rate
-        with torch.no_grad():
-            emissions, _ = asr_model(wav.unsqueeze(0).to(device))
-        return asr_bundle.decode(emissions.argmax(dim=-1))[0].lower().strip()
+        def transcribe_text(wav, sr):
+            """Transcribe waveform using the loaded ASR model."""
+            if sr != asr_bundle.sample_rate:
+                wav = torchaudio.functional.resample(wav, sr, asr_bundle.sample_rate)
+                sr = asr_bundle.sample_rate
+            with torch.no_grad():
+                emissions, _ = asr_model(wav.unsqueeze(0).to(device))
+            return asr_bundle.decode(emissions.argmax(dim=-1))[0].lower().strip()
+    else:
+        asr_bundle = None
+        asr_model = None
 
     loaded_models: dict[str, object] = {}
 
@@ -553,14 +568,20 @@ def main() -> None:
         save_waveform_png(mixture, out_dir / "mixture.png")
         save_waveform_png(tse_result, out_dir / "tse_result.png")
 
-        gt_path = chosen_speaker / "target.txt"
-        gt_text = gt_path.read_text().strip().lower()
-        shutil.copy(gt_path, out_dir / "target.txt")
+        gt_text = ""
+        mixture_text = ""
+        post_text = ""
+        mix_ratio = float("nan")
+        post_ratio = float("nan")
+        if args.eval_text:
+            gt_path = chosen_speaker / "target.txt"
+            gt_text = gt_path.read_text().strip().lower()
+            shutil.copy(gt_path, out_dir / "target.txt")
 
-        mixture_text = transcribe_text(mixture, sr)
-        post_text = transcribe_text(tse_result, sr)
-        mix_ratio = 1.0 - word_error_rate(gt_text, mixture_text)
-        post_ratio = 1.0 - word_error_rate(gt_text, post_text)
+            mixture_text = transcribe_text(mixture, sr)
+            post_text = transcribe_text(tse_result, sr)
+            mix_ratio = 1.0 - word_error_rate(gt_text, mixture_text)
+            post_ratio = 1.0 - word_error_rate(gt_text, post_text)
 
         mixture_path = str(out_dir / "mixture.wav")
         result_path = str(out_dir / "tse_result.wav")
@@ -587,13 +608,19 @@ def main() -> None:
                 post_ratio,
             ]
         )
-        print(
-            f"speaker={chosen_speaker.name} model={model_name} snr={snr_db} babble={num_babble} "
-            f"si_sdr={si_sdr:.2f} rtf={rtf:.3f} mix/gt_acc={mix_ratio:.3f} post/gt_acc={post_ratio:.3f}"
-        )
-        print(
-            f"mixture/GT accuracy: {mix_ratio:.3f}, post-processing/GT accuracy: {post_ratio:.3f}"
-        )
+        if args.eval_text:
+            print(
+                f"speaker={chosen_speaker.name} model={model_name} snr={snr_db} babble={num_babble} "
+                f"si_sdr={si_sdr:.2f} rtf={rtf:.3f} mix/gt_acc={mix_ratio:.3f} post/gt_acc={post_ratio:.3f}"
+            )
+            print(
+                f"mixture/GT accuracy: {mix_ratio:.3f}, post-processing/GT accuracy: {post_ratio:.3f}"
+            )
+        else:
+            print(
+                f"speaker={chosen_speaker.name} model={model_name} snr={snr_db} babble={num_babble} "
+                f"si_sdr={si_sdr:.2f} rtf={rtf:.3f}"
+            )
 
     # Write results
     if results:

@@ -176,6 +176,11 @@ def main():
         type=str,
         help="Path to ground truth transcript (defaults to target with .txt)",
     )
+    parser.add_argument(
+        "--eval_text",
+        action="store_true",
+        help="Evaluate ASR accuracy when ground truth transcript is available",
+    )
     args = parser.parse_args()
 
     if sum([bool(args.noise), bool(args.create_noise), bool(args.musan_dir)]) > 1:
@@ -306,34 +311,37 @@ def main():
     rtf = processing_time / audio_duration if audio_duration > 0 else float("inf")
 
     gt_path = Path(args.gt_text) if args.gt_text else Path(args.target).with_suffix(".txt")
-    if gt_path.exists():
-        asr_bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
-        asr_model = asr_bundle.get_model().to(device)
-        asr_model.eval()
+    if args.eval_text:
+        if gt_path.exists():
+            asr_bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
+            asr_model = asr_bundle.get_model().to(device)
+            asr_model.eval()
 
-        def transcribe(wav, sr):
-            if sr != asr_bundle.sample_rate:
-                wav = torchaudio.functional.resample(wav, sr, asr_bundle.sample_rate)
-            with torch.no_grad():
-                emissions, _ = asr_model(wav.unsqueeze(0).to(device))
-            return asr_bundle.decode(emissions.argmax(dim=-1))[0].lower().strip()
+            def transcribe(wav, sr):
+                if sr != asr_bundle.sample_rate:
+                    wav = torchaudio.functional.resample(wav, sr, asr_bundle.sample_rate)
+                with torch.no_grad():
+                    emissions, _ = asr_model(wav.unsqueeze(0).to(device))
+                return asr_bundle.decode(emissions.argmax(dim=-1))[0].lower().strip()
 
-        gt_text = gt_path.read_text().strip().lower()
-        mixture_text = transcribe(mixture, sr)
-        result_text = transcribe(tse_result, sr)
-        mix_ratio = 1.0 - word_error_rate(gt_text, mixture_text)
-        post_ratio = 1.0 - word_error_rate(gt_text, result_text)
+            gt_text = gt_path.read_text().strip().lower()
+            mixture_text = transcribe(mixture, sr)
+            result_text = transcribe(tse_result, sr)
+            mix_ratio = 1.0 - word_error_rate(gt_text, mixture_text)
+            post_ratio = 1.0 - word_error_rate(gt_text, result_text)
 
-        out_gt = Path(out_dir) / "target.txt"
-        if not out_gt.exists() or gt_path.resolve() != out_gt.resolve():
-            shutil.copy(gt_path, out_gt)
-        Path(out_dir, "mixture.txt").write_text(mixture_text + "\n")
-        Path(out_dir, "tse_result.txt").write_text(result_text + "\n")
+            out_gt = Path(out_dir) / "target.txt"
+            if not out_gt.exists() or gt_path.resolve() != out_gt.resolve():
+                shutil.copy(gt_path, out_gt)
+            Path(out_dir, "mixture.txt").write_text(mixture_text + "\n")
+            Path(out_dir, "tse_result.txt").write_text(result_text + "\n")
 
-        print(f"mixture/GT accuracy: {mix_ratio:.3f}")
-        print(f"post-processing/GT accuracy: {post_ratio:.3f}")
+            print(f"mixture/GT accuracy: {mix_ratio:.3f}")
+            print(f"post-processing/GT accuracy: {post_ratio:.3f}")
+        else:
+            print(f"Ground truth text not found at {gt_path}; skipping ASR evaluation.")
     else:
-        print(f"Ground truth text not found at {gt_path}; skipping ASR evaluation.")
+        print("Text evaluation disabled.")
 
     print(f"Similarity scores: {scores}")
     print(f"Chosen source: {chosen_idx}")
