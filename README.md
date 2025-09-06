@@ -25,6 +25,16 @@ bank with enrollment and target audio for each speaker.
 python src/prepare_voices.py --num_speakers 10 --subset test-clean
 ```
 
+The `--subset` argument accepts any of the official LibriSpeech subsets:
+
+- `dev-clean`
+- `dev-other`
+- `test-clean`
+- `test-other`
+- `train-clean-100`
+- `train-clean-360`
+- `train-other-500`
+
 Resulting structure:
 
 ```
