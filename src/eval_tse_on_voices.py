@@ -109,6 +109,16 @@ def ecapa_embedding(model, wav, device):
 def compute_si_sdr(estimate, reference) -> float:
     """Compute SI-SDR between estimate and reference."""
     import torch
+    import warnings
+
+    if estimate.shape[-1] != reference.shape[-1]:
+        min_len = min(estimate.shape[-1], reference.shape[-1])
+        warnings.warn(
+            f"Trimming inputs for SI-SDR: {estimate.shape[-1]} and {reference.shape[-1]} -> {min_len}",
+            stacklevel=2,
+        )
+        estimate = estimate[..., :min_len]
+        reference = reference[..., :min_len]
 
     def zero_mean(x):
         return x - x.mean()
