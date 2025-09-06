@@ -118,6 +118,77 @@ def compute_si_sdr(estimate, reference) -> float:
     return 10 * torch.log10(torch.dot(s, s) / torch.dot(e, e))
 
 
+def demucs_openvino_separate(sep_model, wav, sr):
+    """Run Demucs OpenVINO model on a mono waveform.
+
+    The OpenVINO export of Demucs expects a fixed-size complex STFT
+    representation of stereo audio with shape ``[1, 4, 2048, 336]`` where the
+    second dimension stacks real and imaginary parts for each stereo channel.
+
+    This helper performs the required pre- and post-processing so callers can
+    simply provide a 1D waveform tensor. It mirrors the preprocessing used when
+    exporting the model and returns time-domain estimates for each separated
+    source as a tensor of shape ``(num_sources, num_samples)``.
+    """
+
+    import torch
+    import torchaudio
+
+    target_sr = 44100
+    if sr != target_sr:
+        wav = torchaudio.functional.resample(wav, sr, target_sr)
+        sr = target_sr
+
+    # Demucs OpenVINO model was exported for 7.8 s segments (336 frames with
+    # hop length 1024).
+    seg_length = 336 * 1024
+    if wav.shape[-1] < seg_length:
+        wav = torch.nn.functional.pad(wav, (0, seg_length - wav.shape[-1]))
+    else:
+        wav = wav[:seg_length]
+
+    # create stereo by duplicating the mono track
+    stereo = wav.repeat(2, 1)
+
+    n_fft = 4096
+    hop = 1024
+    window = torch.hann_window(n_fft)
+    stft = torch.stft(
+        stereo,
+        n_fft=n_fft,
+        hop_length=hop,
+        window=window,
+        return_complex=True,
+        center=True,
+    )
+    # Drop the Nyquist bin to match expected 2048 frequency bins
+    stft = stft[:, :-1, :]
+    spec = torch.cat([stft.real, stft.imag], dim=0).unsqueeze(0)
+
+    ov_output = sep_model([spec.cpu().numpy()])[sep_model.output(0)]
+    ov_output = torch.from_numpy(ov_output).squeeze(0)
+
+    # The model outputs real and imaginary parts concatenated on the channel
+    # dimension. Reconstruct the complex STFT for each estimated source.
+    half = ov_output.shape[0] // 2
+    real, imag = ov_output[:half], ov_output[half:]
+    complex_spec = torch.complex(real, imag)
+    # Restore the dropped Nyquist frequency bin for iSTFT
+    complex_spec = torch.cat(
+        [complex_spec, torch.zeros_like(complex_spec[:, :1, :])], dim=1
+    )
+
+    est = torch.istft(
+        complex_spec,
+        n_fft=n_fft,
+        hop_length=hop,
+        window=window,
+        length=seg_length,
+    )
+
+    return est
+
+
 def compose_babble(wavs: Iterable, length: int):
     """Create uniform babble by looping and level-equalizing input waves."""
     import torch
@@ -280,9 +351,7 @@ def main() -> None:
 
                 start = time.time()
                 if model_name == "demucs":
-                    ov_input = mixture.unsqueeze(0).unsqueeze(0).cpu().numpy()
-                    ov_output = sep_model([ov_input])[sep_model.output(0)]
-                    est_sources = torch.from_numpy(ov_output).squeeze(0)
+                    est_sources = demucs_openvino_separate(sep_model, mixture, sr)
                 else:
                     with torch.no_grad():
                         est_sources = sep_model(mixture.unsqueeze(0).to(device)).squeeze(0)
