@@ -157,12 +157,31 @@ def main():
             est_sources = model(mixture.unsqueeze(0).to(device))
     else:  # demucs
         from huggingface_hub import hf_hub_download
-        from openvino.runtime import Core
+        try:
+            from openvino.runtime import Core
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "Running the 'demucs' separation model requires the 'openvino' "
+                "package. Install it with `pip install openvino`."
+            ) from exc
 
         core = Core()
-        xml_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.xml")
-        bin_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.bin")
-        ov_model = core.read_model(xml_path, bin_path)
+        repo_id = "Intel/demucs-openvino"
+        variant = "htdemucs_v4"
+        local_dir = "models/demucs_openvino"
+        xml_path = hf_hub_download(
+            repo_id=repo_id,
+            filename="htdemucs_fwd.xml",
+            subfolder=variant,
+            local_dir=local_dir,
+        )
+        hf_hub_download(
+            repo_id=repo_id,
+            filename="htdemucs_fwd.bin",
+            subfolder=variant,
+            local_dir=local_dir,
+        )
+        ov_model = core.read_model(xml_path)
         model = core.compile_model(ov_model, "CPU")
         start = time.time()
         ov_input = mixture.unsqueeze(0).unsqueeze(0).numpy()
