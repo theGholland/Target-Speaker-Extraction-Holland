@@ -7,6 +7,8 @@ import torch
 import torchaudio
 from pathlib import Path
 
+from device_utils import get_device
+
 
 def load_audio(path: str, target_sr: Optional[int] = None) -> tuple[torch.Tensor, int]:
     """Load audio file, convert to mono, optionally resample."""
@@ -27,6 +29,8 @@ def mix_at_snr(target: torch.Tensor, noise: torch.Tensor, snr_db: float) -> torc
     noise = noise[..., :L]
     target_power = target.pow(2).mean()
     noise_power = noise.pow(2).mean()
+    if noise_power == 0:
+        return target
     scale = torch.sqrt(target_power / noise_power) * (10 ** (-snr_db / 20))
     noise = noise * scale
     return target + noise
@@ -90,15 +94,7 @@ def main():
     args = parser.parse_args()
 
     # Determine device
-    device = None
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"Using CUDA device: {torch.cuda.get_device_name(device)}")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = torch.device("mps")
-        print("Using MPS device")
-    else:
-        raise RuntimeError("No CUDA or MPS accelerator available")
+    device = get_device()
 
     # Load enrollment/clean target
     target_wav, sr = load_audio(args.target)
@@ -123,6 +119,12 @@ def main():
         mixture = mix_at_snr(target_wav, noise_wav, args.snr_db)
     else:
         mixture = target_wav
+
+    # Ensure the reference target matches the mixture length
+    target_wav = target_wav[..., : mixture.shape[-1]]
+    peak = mixture.abs().max().item()
+    if peak > 1.0:
+        mixture = mixture / peak * 0.9
 
     audio_duration = mixture.shape[-1] / sr
 
@@ -149,12 +151,31 @@ def main():
             est_sources = model(mixture.unsqueeze(0).to(device))
     else:  # demucs
         from huggingface_hub import hf_hub_download
-        from openvino.runtime import Core
+        try:
+            from openvino.runtime import Core
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "Running the 'demucs' separation model requires the 'openvino' "
+                "package. Install it with `pip install openvino`."
+            ) from exc
 
         core = Core()
-        xml_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.xml")
-        bin_path = hf_hub_download("Intel/demucs-openvino", "openvino_model.bin")
-        ov_model = core.read_model(xml_path, bin_path)
+        repo_id = "Intel/demucs-openvino"
+        variant = "htdemucs_v4"
+        local_dir = "models/demucs_openvino"
+        xml_path = hf_hub_download(
+            repo_id=repo_id,
+            filename="htdemucs_fwd.xml",
+            subfolder=variant,
+            local_dir=local_dir,
+        )
+        hf_hub_download(
+            repo_id=repo_id,
+            filename="htdemucs_fwd.bin",
+            subfolder=variant,
+            local_dir=local_dir,
+        )
+        ov_model = core.read_model(xml_path)
         model = core.compile_model(ov_model, "CPU")
         start = time.time()
         ov_input = mixture.unsqueeze(0).unsqueeze(0).numpy()
@@ -178,16 +199,30 @@ def main():
 
     # Write output WAVs
     out_dir = os.path.dirname(args.target)
-    torchaudio.save(os.path.join(out_dir, "sep_source0.wav"), est_sources[0].unsqueeze(0), sr)
-    torchaudio.save(os.path.join(out_dir, "sep_source1.wav"), est_sources[1].unsqueeze(0), sr)
-    torchaudio.save(os.path.join(out_dir, "tse_result.wav"), tse_result.unsqueeze(0), sr)
+    torchaudio.save(
+        os.path.join(out_dir, "sep_source0.wav"),
+        est_sources[0][..., : target_wav.shape[-1]].unsqueeze(0),
+        sr,
+    )
+    torchaudio.save(
+        os.path.join(out_dir, "sep_source1.wav"),
+        est_sources[1][..., : target_wav.shape[-1]].unsqueeze(0),
+        sr,
+    )
+    torchaudio.save(
+        os.path.join(out_dir, "tse_result.wav"),
+        tse_result[..., : target_wav.shape[-1]].unsqueeze(0),
+        sr,
+    )
 
     rtf = processing_time / audio_duration if audio_duration > 0 else float('inf')
 
     print(f"Similarity scores: {scores}")
     print(f"Chosen source: {chosen_idx}")
     if args.target:
-        si_sdr_value = compute_si_sdr(tse_result, target_wav)
+        si_sdr_value = compute_si_sdr(
+            tse_result[..., : target_wav.shape[-1]], target_wav
+        )
         print(f"SI-SDR: {si_sdr_value:.2f} dB")
     print(f"RTF: {rtf:.3f}")
     print(f"Processing time: {processing_time:.2f} s for {audio_duration:.2f} s of audio")

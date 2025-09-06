@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Iterable
 
 
+from device_utils import get_device
+
 def parse_args() -> argparse.Namespace:
     """CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -83,6 +85,8 @@ def mix_at_snr(target, noise, snr_db: float):
     noise = noise[..., :L]
     target_power = target.pow(2).mean()
     noise_power = noise.pow(2).mean()
+    if noise_power == 0:
+        return target
     scale = torch.sqrt(target_power / noise_power) * (10 ** (-snr_db / 20))
     noise = noise * scale
     return target + noise
@@ -168,6 +172,7 @@ def select_babblers(speakers: list[Path], idx: int, num_babble: int) -> list[Pat
     return babbler_dirs
 
 
+
 def main() -> None:
     args = parse_args()
 
@@ -175,12 +180,7 @@ def main() -> None:
     from nemo.collections.asr.models import EncDecSpeakerLabelModel
 
     # Determine device
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        raise RuntimeError("No CUDA or MPS accelerator available")
+    device = get_device()
 
     # Determine evaluation combinations
     if args.snr_db is not None and args.num_babble_voices is not None:
@@ -263,6 +263,7 @@ def main() -> None:
                 target_wav, sr = load_audio(spk_dir / "target.wav", sr)
 
                 # Select babble speakers and ensure uniqueness
+
                 babbler_dirs = select_babblers(speakers, idx, num_babble)
                 babble_wavs = [
                     load_audio(b / "target.wav", sr)[0] for b in babbler_dirs

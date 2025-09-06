@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help=(
             "Fraction of the dataset to use. Useful for quick experiments. "
-            "Value should be between 0 and 1."
+            "Value must be in (0, 1]."
         ),
     )
     parser.add_argument(
@@ -45,7 +45,10 @@ def parse_args() -> argparse.Namespace:
         default="train-clean-100",
         help="LibriSpeech subset to download/use.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not (0 < args.limit <= 1):
+        raise ValueError(f"--limit must be in (0, 1], got {args.limit}")
+    return args
 
 
 def build_voice_bank(args: argparse.Namespace) -> None:
