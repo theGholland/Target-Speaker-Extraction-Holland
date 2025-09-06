@@ -476,18 +476,27 @@ def main() -> None:
         asr_bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
         asr_model = asr_bundle.get_model().to(device)
         asr_model.eval()
+        asr_labels = asr_bundle.get_labels()
 
         def transcribe_text(wav, sr):
             """Transcribe waveform using the loaded ASR model."""
             if sr != asr_bundle.sample_rate:
-                wav = torchaudio.functional.resample(wav, sr, asr_bundle.sample_rate)
+                wav = torchaudio.functional.resample(
+                    wav, sr, asr_bundle.sample_rate
+                )
                 sr = asr_bundle.sample_rate
             with torch.no_grad():
                 emissions, _ = asr_model(wav.unsqueeze(0).to(device))
-            return asr_bundle.decode(emissions.argmax(dim=-1))[0].lower().strip()
+            tokens = torch.argmax(emissions[0], dim=-1)
+            tokens = torch.unique_consecutive(tokens)
+            transcript = "".join(
+                asr_labels[t] for t in tokens if asr_labels[t] != "-"
+            )
+            return transcript.replace("|", " ").lower().strip()
     else:
         asr_bundle = None
         asr_model = None
+        asr_labels = None
 
     loaded_models: dict[str, object] = {}
 
