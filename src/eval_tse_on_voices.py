@@ -429,7 +429,10 @@ def main() -> None:
             from demucs.apply import apply_model
 
             with torch.no_grad():
-                mix = mixture.unsqueeze(0).unsqueeze(0).to(device)
+                # Demucs expects a stereo input. The current mixture is mono,
+                # so duplicate it across two channels before passing it to the
+                # model to avoid a channel mismatch error.
+                mix = torch.stack([mixture, mixture]).unsqueeze(0).to(device)
                 est_sources = apply_model(sep_model, mix, device=device)[0]
                 est_sources = est_sources.mean(dim=1)
         else:
