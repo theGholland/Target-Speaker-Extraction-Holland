@@ -61,6 +61,21 @@ python src/tse_select.py --target path/to/clean.wav --noise path/to/noise.wav \
 Separated sources (`sep_source0.wav`, `sep_source1.wav`) and the selected result
 (`tse_result.wav`) are written alongside the target file.
 
+If a ground‑truth transcript is available, `tse_select.py` can also compare the
+automatic speech recognition (ASR) of the mixture and extracted audio against
+this reference. Pass `--gt_text` or place a `target.txt` next to the target
+audio. The script will copy the reference text to the output folder, transcribe
+`mixture.wav` and `tse_result.wav` with a Wav2Vec2 model, save the transcripts,
+and print accuracy ratios:
+
+```bash
+python src/tse_select.py --target path/to/clean.wav --noise path/to/noise.wav \
+       --gt_text path/to/clean.txt
+```
+
+Console output will include labelled `mixture/GT` and `post-processing/GT`
+accuracy scores.
+
 To test robustness to non-speech noise, provide a path to the [MUSAN dataset](https://www.openslr.org/17)
 and optionally choose a category such as `noise` or `music`:
 
@@ -73,12 +88,14 @@ python src/tse_select.py --target path/to/clean.wav \
 
 `eval_tse_on_voices.py` mixes each target speaker with either uniform babble noise from
 other speakers or a random clip from the MUSAN dataset and then evaluates the extraction
-quality. Each
-invocation creates a timestamped directory under `out_eval` named with the
-current datetime down to milliseconds. A `results.csv` summarising the runs is
-written inside this directory along with one subfolder per run containing the
-audio waveforms and plots. Columns in `results.csv` include speaker,
-separation model, SNR, babble count, SI-SDR and RTF.
+quality. Each invocation creates a timestamped directory under `out_eval` named with the
+current datetime down to milliseconds. A `results.csv` summarising the runs is written
+inside this directory along with one subfolder per run containing the audio waveforms and
+plots. Columns in `results.csv` include speaker, separation model, SNR, babble count,
+SI-SDR and RTF. When transcripts are available the script also records the ASR outputs
+for `mixture.wav` and `tse_result.wav`, the ground‑truth text, and accuracy ratios for
+mixture/GT and post-processing/GT comparisons. These appear in `results.csv` as
+`mixture_text`, `post_text`, `gt_text`, `mixture_gt_ratio`, and `post_gt_ratio`.
 
 Evaluate a single condition:
 
