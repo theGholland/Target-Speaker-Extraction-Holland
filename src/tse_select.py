@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+import random
 from typing import Optional, Iterable
 
 import torch
@@ -57,6 +58,42 @@ def compose_babble(wavs: Iterable[torch.Tensor], length: int) -> torch.Tensor:
     return babble
 
 
+def sample_musan_noise(
+    musan_root: Path, category: str, sr: int, length: int
+) -> torch.Tensor:
+    """Sample a noise clip from the MUSAN dataset.
+
+    Parameters
+    ----------
+    musan_root: Path
+        Root directory of the MUSAN dataset containing ``noise``/``music`` folders.
+    category: str
+        Which subfolder of MUSAN to sample from (e.g., ``"noise"`` or ``"music"``).
+    sr: int
+        Target sample rate for the returned noise.
+    length: int
+        Desired length in samples. The clip is trimmed or looped to match.
+    """
+
+    import torchaudio  # local import to keep CLI help lightweight
+
+    files = list((musan_root / category).rglob("*.wav"))
+    if not files:
+        raise RuntimeError(f"No audio files found in {musan_root / category}")
+    noise_path = random.choice(files)
+    noise, noise_sr = torchaudio.load(noise_path)
+    if noise.ndim > 1:
+        noise = noise.mean(dim=0)
+    if noise_sr != sr:
+        noise = torchaudio.functional.resample(noise, noise_sr, sr)
+    if noise.shape[-1] < length:
+        reps = (length + noise.shape[-1] - 1) // noise.shape[-1]
+        noise = noise.repeat(reps)[:length]
+    else:
+        noise = noise[:length]
+    return noise
+
+
 def ecapa_embedding(model, wav: torch.Tensor, device: torch.device) -> torch.Tensor:
     """Compute a speaker embedding using NeMo ECAPA."""
     with torch.no_grad():
@@ -95,6 +132,14 @@ def main():
     parser.add_argument("--target", type=str, required=True, help="Path to clean target/enrollment audio")
     parser.add_argument("--noise", type=str, help="Path to noise/interferer audio")
     parser.add_argument("--create_noise", action="store_true", help="Create babble noise from other voices")
+    parser.add_argument("--musan_dir", type=str, help="Path to MUSAN dataset root for noise")
+    parser.add_argument(
+        "--musan_category",
+        type=str,
+        default="noise",
+        choices=["noise", "music"],
+        help="MUSAN subset to sample from when --musan_dir is provided",
+    )
     parser.add_argument("--snr_db", type=float, default=0.0, help="SNR for mixing target and noise")
     parser.add_argument(
         "--model",
@@ -105,6 +150,9 @@ def main():
     )
     args = parser.parse_args()
 
+    if sum([bool(args.noise), bool(args.create_noise), bool(args.musan_dir)]) > 1:
+        parser.error("--noise, --create_noise, and --musan_dir are mutually exclusive")
+
     # Determine device
     device = get_device()
 
@@ -112,7 +160,10 @@ def main():
     target_wav, sr = load_audio(args.target)
 
     # If noise provided or to be created, create mixture
-    if args.create_noise:
+    if args.musan_dir:
+        noise_wav = sample_musan_noise(Path(args.musan_dir), args.musan_category, sr, target_wav.shape[-1])
+        mixture = mix_at_snr(target_wav, noise_wav, args.snr_db)
+    elif args.create_noise:
         target_path = Path(args.target)
         voices_dir = target_path.parent.parent
         speaker_dir = target_path.parent.name

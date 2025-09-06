@@ -49,10 +49,19 @@ python src/tse_select.py --target path/to/clean.wav --noise path/to/noise.wav \
 Separated sources (`sep_source0.wav`, `sep_source1.wav`) and the selected result
 (`tse_result.wav`) are written alongside the target file.
 
+To test robustness to non-speech noise, provide a path to the [MUSAN dataset](https://www.openslr.org/17)
+and optionally choose a category such as `noise` or `music`:
+
+```bash
+python src/tse_select.py --target path/to/clean.wav \
+       --musan_dir /path/to/musan --musan_category music --snr_db 5
+```
+
 ## Batch Evaluation of Target Speaker Extraction
 
-`eval_tse_on_voices.py` mixes each target speaker with uniform babble noise at
-specified signal-to-noise ratios and evaluates the extraction quality. Each
+`eval_tse_on_voices.py` mixes each target speaker with either uniform babble noise from
+other speakers or a random clip from the MUSAN dataset and then evaluates the extraction
+quality. Each
 invocation creates a timestamped directory under `out_eval` named with the
 current datetime down to milliseconds. A `results.csv` summarising the runs is
 written inside this directory along with one subfolder per run containing the
@@ -69,6 +78,18 @@ Sweep over multiple SNRs and babble counts:
 
 ```bash
 python src/eval_tse_on_voices.py --snr_list "-5,0,5" --babble_list "1,2,3"
+```
+
+Use MUSAN noise instead of babble voices:
+
+```bash
+python src/eval_tse_on_voices.py --snr_db 0 --musan_dir /path/to/musan --musan_category noise
+```
+
+Or sweep SNRs with MUSAN noise:
+
+```bash
+python src/eval_tse_on_voices.py --snr_list "-5,0,5" --musan_dir /path/to/musan
 ```
 
 Sweep over different separation models:
