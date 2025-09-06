@@ -415,10 +415,13 @@ def main() -> None:
         rtf = processing_time / audio_duration if audio_duration > 0 else float("inf")
         if rtf > 0.5:
             print(
-                f"Rejected {chosen_speaker.name} model={model_name} snr={snr_db} "
-                f"babble={num_babble} RTF={rtf:.3f}"
+                f"High RTF detected for {chosen_speaker.name} model={model_name} "
+                f"snr={snr_db} babble={num_babble} RTF={rtf:.3f}"
             )
-            continue
+            keep = input("Keep this run despite high RTF? [y/N]: ").strip().lower()
+            if keep not in {"y", "yes"}:
+                print("Run skipped due to high RTF.")
+                continue
 
         si_sdr = compute_si_sdr(tse_result, target_wav).item()
 
