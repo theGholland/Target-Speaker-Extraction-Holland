@@ -102,6 +102,47 @@ The `demucs` separation model uses the OpenVINO export from the `Intel/demucs-op
 repository. Ensure the `openvino` package is installed and note that the script downloads
 the `htdemucs_v4` variant on first use.
 
+## Makefile Targets
+
+Common workflows are wrapped in a Makefile.  Variables may be overridden on the command
+line or via the environment.
+
+Build a voice bank:
+
+```bash
+make prepare NUM_SPEAKERS=10 SUBSET=test-clean
+```
+
+Run a single evaluation:
+
+```bash
+make eval SNR_DB=0 NUM_BABBLE=3
+```
+
+Sweep over SNR values:
+
+```bash
+make sweep_snr SNR_LIST="-5,0,5" NUM_BABBLE=3
+```
+
+Sweep over babble voice counts:
+
+```bash
+make sweep_babble SNR_DB=0 BABBLE_LIST="1,2,3"
+```
+
+Run a full SNR × babble grid:
+
+```bash
+make grid SNR_LIST="-5,0,5" BABBLE_LIST="1,2,3"
+```
+
+Remove evaluation outputs:
+
+```bash
+make clean
+```
+
 ## Repository Layout
 
 ```
