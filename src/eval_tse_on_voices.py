@@ -63,7 +63,23 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Random seed controlling selection order",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--musan_dir",
+        type=Path,
+        help="Root of MUSAN dataset for background noise",
+    )
+    parser.add_argument(
+        "--musan_category",
+        type=str,
+        default="noise",
+        choices=["noise", "music"],
+        help="MUSAN subset to sample from when --musan_dir is provided",
+    )
+
+    args = parser.parse_args()
+    if args.musan_dir and (args.num_babble_voices is not None or args.babble_list):
+        parser.error("--musan_dir cannot be combined with babble arguments")
+    return args
 
 
 def load_audio(path: Path, target_sr: int | None = None):
@@ -239,6 +255,40 @@ def compose_babble(wavs: Iterable, length: int):
     return babble
 
 
+def sample_musan_noise(musan_root: Path, category: str, sr: int, length: int):
+    """Sample a noise clip from the MUSAN dataset.
+
+    Parameters
+    ----------
+    musan_root: Path
+        Root directory of the MUSAN dataset containing ``noise``/``music`` folders.
+    category: str
+        Which subfolder of MUSAN to sample from (e.g., ``"noise"`` or ``"music"``).
+    sr: int
+        Target sample rate for the returned noise.
+    length: int
+        Desired length in samples. The clip is trimmed or looped to match.
+    """
+
+    import torchaudio  # local import to keep CLI help lightweight
+
+    files = list((musan_root / category).rglob("*.wav"))
+    if not files:
+        raise RuntimeError(f"No audio files found in {musan_root / category}")
+    noise_path = random.choice(files)
+    noise, noise_sr = torchaudio.load(noise_path)
+    if noise.ndim > 1:
+        noise = noise.mean(dim=0)
+    if noise_sr != sr:
+        noise = torchaudio.functional.resample(noise, noise_sr, sr)
+    if noise.shape[-1] < length:
+        reps = (length + noise.shape[-1] - 1) // noise.shape[-1]
+        noise = noise.repeat(reps)[:length]
+    else:
+        noise = noise[:length]
+    return noise
+
+
 def select_babblers(speakers: list, idx: int, num_babble: int):
     """Select babble speaker directories excluding the current speaker.
 
@@ -331,8 +381,20 @@ def main() -> None:
     device = get_device()
 
     # Determine evaluation combinations
+
     sep_models = [m.strip().lower() for m in args.sep_models.split(",")]
-    if args.snr_db is not None and args.num_babble_voices is not None:
+    if args.musan_dir:
+        if args.snr_db is not None:
+            combos = [(args.snr_db, 0, sep_models[0])]
+        elif args.snr_list:
+            snr_values = [float(s) for s in args.snr_list.split(",")]
+            if len(sep_models) not in (1, len(snr_values)):
+                raise ValueError("sep_models must have length 1 or match snr_list length")
+            models = sep_models * len(snr_values) if len(sep_models) == 1 else sep_models
+            combos = [(snr, 0, model) for snr, model in zip(snr_values, models)]
+        else:
+            raise ValueError("Provide --snr_db or --snr_list when using --musan_dir")
+    elif args.snr_db is not None and args.num_babble_voices is not None:
         combos = [(args.snr_db, args.num_babble_voices, sep_models[0])]
     elif args.snr_list and args.babble_list:
         snr_values = [float(s) for s in args.snr_list.split(",")]
@@ -345,12 +407,12 @@ def main() -> None:
             models = sep_models
         else:
             raise ValueError(
-                "sep_models must have length 1 or match snr_list/babble_list length"
+                "sep_models must have length 1 or match snr_list/babble_list length",
             )
         combos = list(zip(snr_values, babble_values, models))
     else:
         raise ValueError(
-            "Specify either --snr_db and --num_babble_voices or --snr_list and --babble_list"
+            "Specify either --snr_db and --num_babble_voices or --snr_list and --babble_list",
         )
 
     # Gather speakers and pick one at random
@@ -382,12 +444,16 @@ def main() -> None:
         enroll_wav, sr = load_audio(chosen_speaker / "enroll.wav")
         target_wav, sr = load_audio(chosen_speaker / "target.wav", sr)
 
-        # Select babble speakers deterministically after shuffle
-        babbler_dirs = select_babblers(speakers, 0, num_babble)
-        babble_wavs = [load_audio(b / "target.wav", sr)[0] for b in babbler_dirs]
-        babble = compose_babble(babble_wavs, target_wav.shape[-1])
+        if args.musan_dir:
+            noise = sample_musan_noise(
+                args.musan_dir, args.musan_category, sr, target_wav.shape[-1]
+            )
+        else:
+            babbler_dirs = select_babblers(speakers, 0, num_babble)
+            babble_wavs = [load_audio(b / "target.wav", sr)[0] for b in babbler_dirs]
+            noise = compose_babble(babble_wavs, target_wav.shape[-1])
 
-        mixture = mix_at_snr(target_wav, babble, snr_db)
+        mixture = mix_at_snr(target_wav, noise, snr_db)
         peak = mixture.abs().max().item()
         if peak > 1.0:
             mixture = mixture / peak * 0.9  # apply headroom
@@ -428,7 +494,7 @@ def main() -> None:
         import torchaudio
         torchaudio.save(out_dir / "mixture.wav", mixture.unsqueeze(0), sr)
         torchaudio.save(out_dir / "tse_result.wav", tse_result.unsqueeze(0), sr)
-        torchaudio.save(out_dir / "babble.wav", babble.unsqueeze(0), sr)
+        torchaudio.save(out_dir / "noise.wav", noise.unsqueeze(0), sr)
 
         def save_waveform_png(wav, path):
             import matplotlib.pyplot as plt
