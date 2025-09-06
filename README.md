@@ -51,10 +51,13 @@ Separated sources (`sep_source0.wav`, `sep_source1.wav`) and the selected result
 
 ## Batch Evaluation of Target Speaker Extraction
 
-`eval_tse_on_voices.py` mixes each target speaker with uniform babble noise at specified
-signal-to-noise ratios and evaluates the extraction quality.  Results are written to
-`out_eval/results.csv` with columns for speaker, separation model, SNR, babble count,
-SI-SDR, and RTF.
+`eval_tse_on_voices.py` mixes each target speaker with uniform babble noise at
+specified signal-to-noise ratios and evaluates the extraction quality. Each
+invocation creates a timestamped directory under `out_eval` named with the
+current datetime down to milliseconds. A `results.csv` summarising the runs is
+written inside this directory along with one subfolder per run containing the
+audio waveforms and plots. Columns in `results.csv` include speaker,
+separation model, SNR, babble count, SI-SDR and RTF.
 
 Evaluate a single condition:
 

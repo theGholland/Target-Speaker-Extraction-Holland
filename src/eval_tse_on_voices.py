@@ -5,6 +5,7 @@ import argparse
 import csv
 import random
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -341,7 +342,11 @@ def main() -> None:
     chosen_speaker = speakers[0]
     speakers = [chosen_speaker] + [s for s in speakers[1:]]  # keep list for babblers
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    timestamp_dir = (
+        args.out_dir
+        / datetime.now().strftime("%Y%m%d_%H%M%S%f")[:-3]
+    )  # millisecond precision
+    timestamp_dir.mkdir(parents=True, exist_ok=True)
     results = []
 
     spk_model = EncDecSpeakerLabelModel.from_pretrained(
@@ -351,7 +356,7 @@ def main() -> None:
 
     loaded_models: dict[str, object] = {}
 
-    for snr_db, num_babble, model_name in combos:
+    for run_idx, (snr_db, num_babble, model_name) in enumerate(combos):
         if model_name not in loaded_models:
             loaded_models[model_name] = load_sep_model(model_name, device)
         sep_model = loaded_models[model_name]
@@ -399,7 +404,7 @@ def main() -> None:
 
         si_sdr = compute_si_sdr(tse_result, target_wav).item()
 
-        out_dir = args.out_dir / f"snr_{snr_db}" / f"bab_{num_babble}" / chosen_speaker.name
+        out_dir = timestamp_dir / f"run_{run_idx}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
         import torchaudio
@@ -449,7 +454,7 @@ def main() -> None:
 
     # Write results
     if results:
-        csv_path = args.out_dir / "results.csv"
+        csv_path = timestamp_dir / "results.csv"
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(
