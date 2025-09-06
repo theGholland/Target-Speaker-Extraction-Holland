@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Iterable
 
 
+from device_utils import get_device
+
 def parse_args() -> argparse.Namespace:
     """CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -146,12 +148,7 @@ def main() -> None:
     from nemo.collections.asr.models import EncDecSpeakerLabelModel
 
     # Determine device
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        raise RuntimeError("No CUDA or MPS accelerator available")
+    device = get_device()
 
     # Determine evaluation combinations
     if args.snr_db is not None and args.num_babble_voices is not None:

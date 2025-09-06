@@ -7,6 +7,8 @@ import torch
 import torchaudio
 from pathlib import Path
 
+from device_utils import get_device
+
 
 def load_audio(path: str, target_sr: Optional[int] = None) -> tuple[torch.Tensor, int]:
     """Load audio file, convert to mono, optionally resample."""
@@ -90,15 +92,7 @@ def main():
     args = parser.parse_args()
 
     # Determine device
-    device = None
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"Using CUDA device: {torch.cuda.get_device_name(device)}")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = torch.device("mps")
-        print("Using MPS device")
-    else:
-        raise RuntimeError("No CUDA or MPS accelerator available")
+    device = get_device()
 
     # Load enrollment/clean target
     target_wav, sr = load_audio(args.target)
