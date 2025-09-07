@@ -255,7 +255,7 @@ def main():
             from demucs.pretrained import get_model
             from demucs.apply import apply_model
 
-        model = get_model(name="htdemucs").to(device)
+        model = get_model(name="htdemucs_speech").to(device)
         model.eval()
         start = time.time()
         with torch.no_grad():
