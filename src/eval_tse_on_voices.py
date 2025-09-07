@@ -294,7 +294,7 @@ def load_sep_model(model_name: str, device):
             subprocess.check_call([sys.executable, "-m", "pip", "install", "demucs"])
             from demucs.pretrained import get_model
 
-        model = get_model(name="htdemucs").to(device)
+        model = get_model(name="htdemucs_speech").to(device)
     else:
         raise ValueError(f"Unknown separation model: {model_name}")
 
